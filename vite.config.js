@@ -8,6 +8,7 @@ import { defineConfig } from 'vite';
 import { defaultExclude } from 'vitest/config';
 
 import { buildChunks, collectSharedModules } from './scripts/vite/chunks.js';
+import { l10nDebug } from './scripts/vite/l10n-debug.js';
 import { getAppLocales, getDayjsLocales, yamlToJS } from './scripts/vite/locales.js';
 import { buildNpm } from './scripts/vite/npm-build.js';
 import { copyPackageFiles, generateExtraFiles } from './scripts/vite/package-files.js';
@@ -151,6 +152,8 @@ export default defineConfig({
     outDir: 'package/dist',
   },
   plugins: [
+    // Must come before `yamlToJS` in the shared plugins, see `scripts/vite/l10n-debug.js`
+    l10nDebug(),
     ...getSharedPlugins({ cdn: true }),
     copyPackageFiles(),
     generateExtraFiles(),

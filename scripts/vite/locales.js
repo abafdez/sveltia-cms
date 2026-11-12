@@ -11,7 +11,8 @@ import { resolveModuleDir } from './utils.js';
 /**
  * Path to the app’s locale files.
  */
-const APP_LOCALES_DIR = 'src/lib/locales';
+export const APP_LOCALES_DIR = 'src/lib/locales';
+
 /**
  * Path to the generated locale files.
  */
@@ -105,7 +106,7 @@ export const yamlToJS = () => ({
  * @param {string} filePath Path to the YAML file.
  * @returns {Promise<Record<string, any>>} Parsed object.
  */
-const parseYAMLFile = async (filePath) =>
+export const parseYAMLFile = async (filePath) =>
   /** @type {Record<string, any>} */ (squashStrings(parseYAML(await readFile(filePath, 'utf-8'))));
 
 /**
