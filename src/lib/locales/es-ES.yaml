@@ -2026,7 +2026,7 @@ config:
     github_pkce_unsupported: La autorización PKCE aún no es compatible debido a las limitaciones de GitHub. Usa un <a>método de autenticación</a> diferente en su lugar.
     oauth_no_app_id: No se ha definido el ID de la aplicación OAuth.
     # Don’t localize `open_authoring`, `editorial_workflow` and `preview`
-    open_authoring_no_workflow: La opción `open_authoring` requiere el modo de publicación `editorial_workflow`. Consulta la <a>documentación</a> para más detalles.
+    open_authoring_no_workflow: La opción `open_authoring` requiere el modo de publicación `editorial_workflow` o `preview`. Consulta la <a>documentación</a> para más detalles.
     # Don’t localize `auth_methods`
     no_auth_methods: La opción `auth_methods` debe contener al menos un método.
     # Don’t localize `auth_scope`, `repo` and `public_repo`
@@ -2065,9 +2065,9 @@ config:
     # {$name} is the duplicate asset collection name
     duplicate_asset_collection_name: Los nombres de las colecciones de recursos deben ser únicos, pero `{$name}` se usa más de una vez.
     # Don’t localize `folder`, `file`, `files`, and `divider`
-    invalid_collection_no_options: La colección debe tener definida una de las opciones `folder`, `files` o `divider`.
+    invalid_collection_no_options: La colección debe tener definida una de las opciones `folder`, `file`, `files` o `divider`.
     # Don’t localize `folder`, `file`, `files`, and `divider`
-    invalid_collection_multiple_options: La colección no puede tener las opciones `folder`, `files` y `divider` juntas.
+    invalid_collection_multiple_options: La colección no puede tener más de una de las opciones `folder`, `file`, `files` y `divider`.
     # {$extension} is the file extension and {$format} is the configured content format
     file_format_mismatch: La extensión `{$extension}` no coincide con el formato `{$format}`.
     # {$name} is the field name from the configuration and {$widget} is its field type
