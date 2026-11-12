@@ -27,6 +27,56 @@ const UTILS_SPECIFIER = '@sveltia/utils/l10n-debug';
  * repository with its content. Its configuration file is served at `/admin/config.yml`.
  */
 const SAMPLE_SITE_PATH = '/l10n-debug';
+/**
+ * Local storage key of the user preferences, see `src/lib/services/user/prefs.svelte.js`.
+ */
+const PREFS_STORAGE_KEY = 'sveltia-cms.prefs';
+/**
+ * Values of `L10N_DEBUG` that only turn the overlay on, without choosing a locale.
+ */
+const ENABLED_VALUES = ['1', 'true', 'yes', 'on'];
+
+/**
+ * Get the locale to open the CMS in, given as the value of `L10N_DEBUG`, e.g. `L10N_DEBUG=es-ES`.
+ * @returns {string | undefined} Locale code, or `undefined` if the variable only turns the overlay
+ * on, e.g. `L10N_DEBUG=1`.
+ * @throws {Error} When the value isn’t a locale the CMS has a file for, which is likely a typo.
+ */
+const getTestLocale = () => {
+  const value = /** @type {string} */ (process.env.L10N_DEBUG);
+
+  if (ENABLED_VALUES.includes(value.toLowerCase())) {
+    return undefined;
+  }
+
+  const locales = readdirSync(APP_LOCALES_DIR)
+    .filter((name) => name.endsWith('.yaml'))
+    .map((name) => path.basename(name, '.yaml'));
+
+  if (!locales.includes(value)) {
+    throw new Error(
+      `L10N_DEBUG=${value} isn’t a locale of the CMS. Set it to 1 to keep the language you’ve ` +
+        `chosen, or to one of: ${locales.join(', ')}.`,
+    );
+  }
+
+  return value;
+};
+
+/**
+ * Get the code of an inline script that sets the language preference to the given locale before
+ * the CMS starts, as the CMS reads it from the local storage at startup.
+ * @param {string} locale Locale code.
+ * @returns {string} Code.
+ */
+const getLocaleScript = (locale) =>
+  [
+    'try {',
+    `  const key = ${JSON.stringify(PREFS_STORAGE_KEY)};`,
+    "  const prefs = JSON.parse(localStorage.getItem(key) || '{}') ?? {};",
+    `  localStorage.setItem(key, JSON.stringify({ ...prefs, locale: ${JSON.stringify(locale)} }));`,
+    '} catch {}',
+  ].join('\n');
 
 /**
  * Get the path of the localization debugging utilities in a local clone of `sveltia-utils`, if the
@@ -108,6 +158,8 @@ const readLocaleFiles = async (dir) =>
  * app have been checked. The locale files are marked as they’re loaded, so none of them is changed.
  * The CMS also gets a sample site to work with, built from the end-to-end test fixtures and seeded
  * into the test repository, unless `L10N_DEBUG_CONTENT=0` is set to use the usual configuration.
+ * Set the variable to a locale code instead, e.g. `L10N_DEBUG=es-ES pnpm dev`, to open the CMS in
+ * that language on every page load; it can still be switched in the settings until the next load.
  * Must come before the `yamlToJS` plugin, which would load the files otherwise.
  * @returns {Promise<Plugin | null>} Vite plugin, or `null` if the variable isn’t set.
  */
@@ -116,6 +168,7 @@ export const l10nDebug = async () => {
     return null;
   }
 
+  const testLocale = getTestLocale();
   const localUtilsPath = getLocalUtilsPath();
 
   const { createL10nDebugRegistry, createChecklistByTopLevelKey, markMessages } =
@@ -288,6 +341,15 @@ export const l10nDebug = async () => {
     },
     // eslint-disable-next-line jsdoc/require-jsdoc
     transformIndexHtml: () => [
+      ...(testLocale
+        ? [
+            {
+              tag: 'script',
+              children: getLocaleScript(testLocale),
+              injectTo: /** @type {const} */ ('head-prepend'),
+            },
+          ]
+        : []),
       ...(sampleSite
         ? [
             {

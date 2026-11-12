@@ -113,6 +113,11 @@ describe('Test l10nDebug()', () => {
     await expect(l10nDebug()).resolves.toBeNull();
   });
 
+  test('rejects a value of `L10N_DEBUG` that isn’t a locale of the CMS', async () => {
+    process.env.L10N_DEBUG = 'es-XX';
+    await expect(l10nDebug()).rejects.toThrow(/L10N_DEBUG=es-XX isn’t a locale of the CMS.+en-US/);
+  });
+
   describe.skipIf(!utils)('with the utilities', () => {
     /** @type {Plugin} */
     let plugin;
@@ -254,6 +259,55 @@ describe('Test l10nDebug()', () => {
           attrs: { type: 'module', src: '/@id/__x00__virtual:l10n-debug' },
         }),
       ]);
+    });
+
+    test('opens the CMS in the locale `L10N_DEBUG` is set to', async () => {
+      process.env.L10N_DEBUG = 'TRUE';
+      plugin = /** @type {Plugin} */ (await l10nDebug());
+      expect(call(plugin.transformIndexHtml)).toHaveLength(2);
+
+      process.env.L10N_DEBUG = 'en-US';
+      plugin = /** @type {Plugin} */ (await l10nDebug());
+
+      const [tag, ...rest] = call(plugin.transformIndexHtml);
+      /** @type {Map<string, string>} */
+      const storage = new Map([['sveltia-cms.prefs', '{"theme":"dark","locale":"ja"}']]);
+
+      const localStorage = {
+        /**
+         * Get a stored value.
+         * @param {string} key Key.
+         * @returns {string | null} Value.
+         */
+        getItem: (key) => storage.get(key) ?? null,
+        /**
+         * Store a value.
+         * @param {string} key Key.
+         * @param {string} value Value.
+         */
+        setItem: (key, value) => {
+          storage.set(key, value);
+        },
+      };
+
+      expect(tag).toEqual(expect.objectContaining({ tag: 'script', injectTo: 'head-prepend' }));
+      expect(rest).toHaveLength(2);
+
+      // eslint-disable-next-line no-new-func
+      const run = new Function('localStorage', tag.children);
+
+      run(localStorage);
+      expect(JSON.parse(/** @type {string} */ (storage.get('sveltia-cms.prefs')))).toEqual({
+        theme: 'dark',
+        locale: 'en-US',
+      });
+
+      storage.clear();
+      run(localStorage);
+      expect(storage.get('sveltia-cms.prefs')).toBe('{"locale":"en-US"}');
+
+      // An unavailable local storage is ignored
+      expect(() => run(undefined)).not.toThrow();
     });
 
     test('rebuilds the registry when a locale file changes', async () => {
