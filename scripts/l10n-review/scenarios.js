@@ -1,10 +1,22 @@
 /**
+ * The screens and states of the app to review, and the configurations they start it with. The
+ * sample site is the Sveltia CMS demo site (see `site.js`), so the routes below use its
+ * collections, entries and files.
+ */
+
+import { CONFIG_ERROR_SCENARIOS } from './config-errors.js';
+
+/**
  * Options that need a fresh start of the app: the configuration it loads, whether it signs in and
  * the responses its requests get. Scenarios sharing the same options run one after another in the
  * same app, which is much faster than starting it again.
  * @typedef {object} ScenarioBoot
  * @property {string} [config] Name of a configuration in {@link CONFIGS}. Defaults to `sample`.
  * @property {boolean} [signIn] Whether to sign in with the test repository. Defaults to `true`.
+ * @property {boolean} [demo] Whether the app runs as a demo site, as it does with a seed manifest:
+ * it then greets the user with a dialog. Defaults to `false`.
+ * @property {boolean} [devMode] Whether developer mode is on, which adds the Help menu and other
+ * items. Defaults to `false`.
  * @property {FetchMock[]} [mocks] Responses to requests the app makes, e.g. to a Git host.
  */
 
@@ -20,7 +32,8 @@
 /**
  * A step in a scenario, run once the app is on the route. Elements are found by the key of a
  * message they show, in their text or an attribute such as `aria-label`, not by CSS selectors, so a
- * change in the markup of the app doesn’t break the scenario.
+ * change in the markup of the app doesn’t break the scenario. A `wait` step also checks that the
+ * screen shows what it’s meant to.
  * @typedef {{ click: string } | { wait: string } | { press: string }} ScenarioStep
  */
 
@@ -35,101 +48,119 @@
  */
 
 /**
- * Sample site configuration shared by the scenarios. It uses the test repository, which keeps its
- * files in the browser, so no Git host is needed.
+ * Where a configuration comes from: a function changing the sample site’s, or, to show the errors
+ * of a file that can’t be read, the content or the HTTP status to serve instead.
+ * @typedef {object} ConfigSource
+ * @property {(base: Record<string, any>) => Record<string, any>} [build] Function returning the
+ * configuration from the sample site’s, which it may change.
+ * @property {string} [raw] Content to serve.
+ * @property {number} [status] HTTP status to serve.
  */
-const SAMPLE_CONFIG = {
-  backend: { name: 'test-repo' },
-  media_folder: 'static/images',
-  public_folder: '/images',
-  collections: [
-    {
-      name: 'posts',
-      label: 'Posts',
-      label_singular: 'Post',
-      folder: 'content/posts',
-      create: true,
-      fields: [
-        { name: 'title', label: 'Title' },
-        { name: 'date', label: 'Date', widget: 'datetime' },
-        { name: 'draft', label: 'Draft', widget: 'boolean', default: false },
-        { name: 'tags', label: 'Tags', widget: 'list' },
-        { name: 'body', label: 'Body', widget: 'markdown' },
-      ],
-    },
-    {
-      name: 'notes',
-      label: 'Notes',
-      label_singular: 'Note',
-      folder: 'content/notes',
-      create: true,
-      limit: 4,
-      fields: [
-        { name: 'title', label: 'Title' },
-        { name: 'body', label: 'Body', widget: 'text' },
-      ],
-    },
-  ],
-};
+
+/**
+ * Set the maximum number of entries of a collection.
+ * @param {Record<string, any>} config Configuration.
+ * @param {string} name Collection name.
+ * @param {number} limit Maximum number of entries.
+ * @returns {Record<string, any>} Configuration.
+ */
+const withLimit = (config, name, limit) => ({
+  ...config,
+  collections: config.collections.map((/** @type {Record<string, any>} */ collection) =>
+    collection.name === name ? { ...collection, limit } : collection,
+  ),
+});
 
 /**
  * Configurations the scenarios can start the app with, keyed with their name.
- * @type {Record<string, Record<string, any>>}
+ * @type {Record<string, ConfigSource>}
  */
 export const CONFIGS = {
-  sample: SAMPLE_CONFIG,
-  'missing-collection-name': {
-    ...SAMPLE_CONFIG,
-    collections: [{ ...SAMPLE_CONFIG.collections[0], name: undefined }],
-  },
+  // eslint-disable-next-line jsdoc/require-jsdoc
+  sample: { build: (base) => base },
+  // The demo has 6 posts
+  // eslint-disable-next-line jsdoc/require-jsdoc
+  'quota-nearing': { build: (base) => withLimit(base, 'posts', 7) },
+  // eslint-disable-next-line jsdoc/require-jsdoc
+  'quota-reached': { build: (base) => withLimit(base, 'posts', 6) },
+  ...Object.fromEntries(
+    CONFIG_ERROR_SCENARIOS.map(({ name, build, raw, status }) => [
+      `error-${name}`,
+      { build, raw, status },
+    ]),
+  ),
 };
 
 /**
- * Files of the sample site, seeded into the test repository before the app starts.
- * @type {Record<string, string>}
+ * Files of the demo’s Field Types collection, one per built-in field type.
  */
-export const SAMPLE_FILES = {
-  'content/posts/hello-world.md': [
-    '---',
-    'title: Hello World',
-    'date: 2026-01-15T10:00:00Z',
-    'draft: false',
-    'tags: [news, intro]',
-    '---',
-    '',
-    'Welcome to the **sample site**.',
-    '',
-  ].join('\n'),
-  'content/posts/second-post.md': [
-    '---',
-    'title: Second Post',
-    'date: 2026-02-01T09:30:00Z',
-    'draft: true',
-    '---',
-    '',
-    'Another entry.',
-    '',
-  ].join('\n'),
-  'content/notes/one.md': '---\ntitle: One\n---\n',
-  'content/notes/two.md': '---\ntitle: Two\n---\n',
-  'content/notes/three.md': '---\ntitle: Three\n---\n',
-};
+const FIELD_TYPES = [
+  'boolean',
+  'code',
+  'color',
+  'compute',
+  'datetime',
+  'file',
+  'hidden',
+  'image',
+  'keyvalue',
+  'list',
+  'map',
+  'number',
+  'object',
+  'relation',
+  'richtext',
+  'select',
+  'string',
+  'text',
+  'uuid',
+];
 
 /**
- * Screens and states to review.
+ * Panels of the Settings dialog, by the key of their tab.
+ */
+const SETTINGS_PANELS = [
+  'appearance',
+  'language',
+  'contents',
+  'media',
+  'ai',
+  'accessibility',
+  'data',
+  'developer',
+];
+
+/**
+ * Steps opening the Settings dialog.
+ * @type {ScenarioStep[]}
+ */
+const OPEN_SETTINGS = [{ click: 'show_account_menu' }, { click: 'settings' }];
+
+/**
+ * Screens and states to review, in the order a translator goes through them. Scenarios with the
+ * same start options are grouped by the review page, so the order here only matters within them.
  * @type {Scenario[]}
  */
 export const SCENARIOS = [
+  // Entrance
   {
     id: 'entrance/sign-in',
     title: 'Sign-in page',
     boot: { signIn: false },
   },
   {
-    id: 'config/missing-collection-name',
-    title: 'Configuration error › collection without a name',
-    boot: { config: 'missing-collection-name', signIn: false },
+    id: 'entrance/demo-sign-in',
+    title: 'Demo site › Sign-in page',
+    boot: { demo: true, signIn: false },
   },
+  {
+    id: 'entrance/demo-welcome',
+    title: 'Demo site › Welcome dialog',
+    boot: { demo: true },
+    route: '#/collections/posts',
+  },
+
+  // Entry list
   {
     id: 'contents/entry-list',
     title: 'Content › Entry list',
@@ -142,25 +173,167 @@ export const SCENARIOS = [
     steps: [{ click: 'sort' }],
   },
   {
-    id: 'contents/quota',
-    title: 'Content › Entry list › Collection nearing its limit',
-    route: '#/collections/notes',
+    id: 'contents/filtering-menu',
+    title: 'Content › Entry list › Filtering menu',
+    route: '#/collections/posts',
+    steps: [{ click: 'filter' }],
   },
+  {
+    id: 'contents/grouping-menu',
+    title: 'Content › Entry list › Grouping menu',
+    route: '#/collections/posts',
+    steps: [{ click: 'group' }],
+  },
+  {
+    id: 'contents/table-view',
+    title: 'Content › Entry list › Table view',
+    route: '#/collections/posts',
+    steps: [{ click: 'table_view' }],
+  },
+  {
+    id: 'contents/grid-view',
+    title: 'Content › Entry list › Grid view',
+    route: '#/collections/authors',
+    steps: [{ click: 'grid_view' }],
+  },
+  {
+    id: 'contents/selection',
+    title: 'Content › Entry list › Entries selected',
+    // Another collection than the next scenario’s: Select All toggles, and the selection is only
+    // cleared when the listed entries change, so it would deselect them there
+    route: '#/collections/posts',
+    steps: [{ click: 'select_all' }],
+  },
+  {
+    id: 'contents/delete-dialog',
+    title: 'Content › Entry list › Delete confirmation',
+    route: '#/collections/authors',
+    steps: [{ click: 'select_all' }, { click: 'delete' }],
+  },
+  {
+    id: 'contents/tree',
+    title: 'Content › Nested collection',
+    route: '#/collections/pages',
+  },
+  {
+    id: 'contents/quota-nearing',
+    title: 'Content › Entry list › Collection nearing its limit',
+    boot: { config: 'quota-nearing' },
+    route: '#/collections/posts',
+    steps: [{ wait: 'creating_entries_nearing_quota' }],
+  },
+  {
+    id: 'contents/quota-reached',
+    title: 'Content › Entry list › Collection at its limit',
+    boot: { config: 'quota-reached' },
+    route: '#/collections/posts',
+    steps: [{ wait: 'creating_entries_disabled_by_quota' }],
+  },
+
+  // Content editor
   {
     id: 'contents/new-entry',
     title: 'Content Editor › New entry',
     route: '#/collections/posts/new',
   },
   {
+    id: 'contents/validation-errors',
+    title: 'Content Editor › New entry › Validation errors',
+    route: '#/collections/posts/new',
+    steps: [{ click: 'save' }],
+  },
+  {
+    id: 'contents/multilingual-entry',
+    title: 'Content Editor › Multilingual entry',
+    route: '#/collections/posts/entries/welcome-to-the-demo',
+  },
+  {
     id: 'contents/editor-options',
     title: 'Content Editor › Editor options menu',
-    route: '#/collections/posts/entries/hello-world',
+    route: '#/collections/posts/entries/welcome-to-the-demo',
     steps: [{ click: 'show_editor_options' }],
   },
+  {
+    id: 'contents/content-options',
+    title: 'Content Editor › Content options menu',
+    route: '#/collections/posts/entries/welcome-to-the-demo',
+    steps: [{ click: 'show_content_options_x_locale' }],
+  },
+  ...FIELD_TYPES.map((name) => ({
+    id: `fields/${name}`,
+    title: `Content Editor › Field types › ${name}`,
+    route: `#/collections/examples/entries/${name}`,
+  })),
+  {
+    id: 'contents/singleton-yaml',
+    title: 'Content Editor › Singleton (YAML)',
+    route: '#/collections/_singletons/entries/site',
+  },
+  {
+    id: 'contents/singleton-json',
+    title: 'Content Editor › Singleton (JSON)',
+    route: '#/collections/_singletons/entries/navigation',
+  },
+  {
+    id: 'contents/singleton-toml',
+    title: 'Content Editor › Singleton (TOML)',
+    route: '#/collections/_singletons/entries/theme',
+  },
+
+  // Assets
+  {
+    id: 'assets/images',
+    title: 'Assets › Images',
+    route: '#/assets/static/images',
+  },
+  {
+    id: 'assets/files',
+    title: 'Assets › Files',
+    route: '#/assets/static/files',
+  },
+  {
+    id: 'assets/list-view',
+    title: 'Assets › List view, with each file’s type',
+    route: '#/assets/static/files',
+    steps: [{ click: 'list_view' }],
+  },
+  {
+    id: 'assets/details',
+    title: 'Assets › Asset details',
+    route: '#/assets/static/images/bruges.webp',
+  },
+
+  // Global
   {
     id: 'global/account-menu',
     title: 'Account menu',
     route: '#/collections/posts',
     steps: [{ click: 'show_account_menu' }],
   },
+  {
+    id: 'global/help-menu',
+    title: 'Help menu (developer mode)',
+    boot: { devMode: true },
+    route: '#/collections/posts',
+    steps: [{ click: 'show_help_menu' }],
+  },
+  {
+    id: 'global/keyboard-shortcuts',
+    title: 'Keyboard shortcuts dialog',
+    route: '#/collections/posts',
+    steps: [{ click: 'show_account_menu' }, { click: 'keyboard_shortcuts' }],
+  },
+  ...SETTINGS_PANELS.map((key) => ({
+    id: `settings/${key}`,
+    title: `Settings › ${key}`,
+    route: '#/collections/posts',
+    steps: [...OPEN_SETTINGS, { click: `prefs.${key}.title` }],
+  })),
+
+  // Configuration errors
+  ...CONFIG_ERROR_SCENARIOS.map(({ name, label }) => ({
+    id: `config/${name}`,
+    title: `Configuration errors › ${label}`,
+    boot: { config: `error-${name}`, signIn: false },
+  })),
 ];

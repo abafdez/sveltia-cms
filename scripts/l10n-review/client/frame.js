@@ -153,7 +153,12 @@ const createMemoryStorage = (initial) => {
 
 Object.defineProperty(window, 'localStorage', {
   configurable: true,
-  value: createMemoryStorage({ 'sveltia-cms.prefs': JSON.stringify({ locale: LOCALE }) }),
+  value: createMemoryStorage({
+    'sveltia-cms.prefs': JSON.stringify({
+      locale: LOCALE,
+      ...(BOOT.devMode ? { devModeEnabled: true } : {}),
+    }),
+  }),
 });
 
 // The browser language is the frame’s, so the app doesn’t suggest switching to another one in a
@@ -766,6 +771,21 @@ const press = (key) => {
 };
 
 /**
+ * Check whether a menu, a popup or a dialog is open. Only popup anchors count: an expanded object
+ * field, list or tree item also has `aria-expanded="true"`, and Escape would close the editor.
+ * @returns {boolean} Result.
+ */
+const hasOpenPopup = () =>
+  !!document.querySelector('dialog[open], [aria-haspopup][aria-expanded="true"]');
+
+/**
+ * Get what the screen shows, to tell when it changes: its text, which includes the markers of the
+ * message keys. It’s read every few milliseconds, so it doesn’t walk the page or measure layout.
+ * @returns {string} Text.
+ */
+const getScreenSignature = () => document.body.textContent ?? '';
+
+/**
  * Run a scenario: reset what the previous one opened, open the route, run the steps.
  * @param {{ route?: string, steps?: Record<string, string>[] }} scenario Scenario.
  */
@@ -773,15 +793,27 @@ const runScenario = async ({ route, steps = [] }) => {
   outlines = { keys: [] };
   drawOutlines();
 
-  // Close the menus and dialogs a previous scenario may have opened
-  press('Escape');
-  press('Escape');
+  // Close the menus and dialogs a previous scenario may have opened. Escape is only pressed when
+  // one is open: in the content editor it closes the editor, which goes back in the history once
+  // its transition ends, after the route below is set, so the app would end up on the previous
+  // screen
+  for (let attempt = 0; attempt < 2 && hasOpenPopup(); attempt += 1) {
+    press('Escape');
+    // eslint-disable-next-line no-await-in-loop
+    await settle({ quiet: 50, timeout: 1000 });
+  }
+
   document.querySelectorAll('dialog[open]').forEach((dialog) => {
     /** @type {HTMLDialogElement} */ (dialog).close();
   });
 
   if (route && window.location.hash !== route) {
+    const before = getScreenSignature();
+
     window.location.hash = route;
+    // The app takes a moment to show the new route, with a transition when an editor closes: wait
+    // for the screen to change, or the scan would find the previous screen
+    await waitFor(() => getScreenSignature() !== before, 3000).catch(() => undefined);
   }
 
   await settle();
@@ -995,7 +1027,8 @@ const nextTask = () =>
     mark('locale');
 
     if (BOOT.signIn !== false) {
-      await clickMessage('work_with_test_repo');
+      // A demo site has its own button on the sign-in page
+      await clickMessage(BOOT.demo ? 'start_demo' : 'work_with_test_repo');
       // The main screen has the account menu, as the end-to-end tests also expect
       await waitFor(() => findElement('show_account_menu'), 15000).catch(() => {
         throw new Error('Signing in with the test repository didn’t finish');

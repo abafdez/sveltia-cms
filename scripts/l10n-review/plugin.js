@@ -5,6 +5,7 @@ import { stringify as stringifyYAML } from 'yaml';
 
 import { getAppLocales } from '../vite/locales.js';
 
+import { getDemoDir, hasDemo, listSeedFiles, readBaseConfig, resolveSiteFile } from './site.js';
 import {
   acceptMessages,
   getReviewItems,
@@ -122,15 +123,45 @@ const readJSON = async (req) => {
 };
 
 /**
+ * Content types of the files the demo site has, by extension.
+ */
+const CONTENT_TYPES = {
+  '.gpx': 'application/gpx+xml',
+  '.jpg': 'image/jpeg',
+  '.js': 'text/javascript',
+  '.json': 'application/json',
+  '.md': 'text/markdown',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.toml': 'text/plain',
+  '.txt': 'text/plain',
+  '.webp': 'image/webp',
+  '.yaml': 'text/yaml',
+  '.yml': 'text/yaml',
+};
+
+/**
+ * Get the content type of a file.
+ * @param {string} filePath Path.
+ * @returns {string} Content type.
+ */
+const getContentType = (filePath) =>
+  /** @type {Record<string, string>} */ (CONTENT_TYPES)[path.extname(filePath).toLowerCase()] ??
+  'application/octet-stream';
+
+/**
  * Send a response.
  * @param {ServerResponse} res Response.
  * @param {number} status Status code.
- * @param {string} body Body.
+ * @param {string | Buffer} body Body.
  * @param {string} type Content type.
  */
 const send = (res, status, body, type) => {
   res.statusCode = status;
-  res.setHeader('Content-Type', `${type}; charset=utf-8`);
+  res.setHeader(
+    'Content-Type',
+    /^text\/|json|javascript/.test(type) ? `${type}; charset=utf-8` : type,
+  );
   res.setHeader('Cache-Control', 'no-store');
   res.end(body);
 };
@@ -199,8 +230,17 @@ const getFrameHTML = async (server, url) => {
     throw new Error('The app page has no module script to run the review script before.');
   }
 
+  /** @type {{ demo?: boolean }} */
+  let boot = {};
+
+  try {
+    boot = JSON.parse(url.searchParams.get('boot') ?? '{}');
+  } catch {
+    // Start options that can’t be read are left out
+  }
+
   // The scripts go right before the app’s, so they run first
-  const html = appHTML.replace(
+  let html = appHTML.replace(
     '<script type="module"',
     [
       `<script>window.l10nReviewMessages = ${messages.replaceAll('<', '\\u003c')};</script>`,
@@ -208,6 +248,23 @@ const getFrameHTML = async (server, url) => {
       '<script type="module"',
     ].join('\n    '),
   );
+
+  if (hasDemo()) {
+    // The demo’s JavaScript API examples: custom previews, editor components, a field type and a
+    // custom page. A module script runs after the app’s, which defines `CMS`
+    html = html.replace(
+      '</body>',
+      `  <script type="module" src="${SITE_PATH}/api.js"></script>\n  </body>`,
+    );
+  }
+
+  if (boot.demo) {
+    // A seed manifest makes the app run as a demo site. The page has seeded the repository already
+    html = html.replace(
+      '</head>',
+      `  <link rel="cms-seed-url" href="${SITE_PATH}/seed/manifest.json" />\n  </head>`,
+    );
+  }
 
   return server.transformIndexHtml(url.pathname + url.search, html);
 };
@@ -244,7 +301,7 @@ const handleAPI = async (route, url, req, res) => {
       .filter((code) => code !== SOURCE_LOCALE)
       .sort();
 
-    const { SCENARIOS, SAMPLE_FILES } = await loadScenarios();
+    const { SCENARIOS } = await loadScenarios();
 
     sendJSON(res, {
       sourceLocale: SOURCE_LOCALE,
@@ -252,7 +309,7 @@ const handleAPI = async (route, url, req, res) => {
       locales,
       items: await getReviewItems(locale),
       scenarios: SCENARIOS,
-      files: SAMPLE_FILES,
+      demo: { found: hasDemo(), dir: getDemoDir() },
       coverage: await readCoverage(),
     });
 
@@ -352,11 +409,31 @@ export const l10nReview = () => ({
         } else if (pathname === `${SITE_PATH}/admin/config.yml`) {
           const { CONFIGS } = await loadScenarios();
           const name = getConfigName(req);
+          const source = Object.hasOwn(CONFIGS, name) ? CONFIGS[name] : undefined;
 
-          if (Object.hasOwn(CONFIGS, name)) {
-            send(res, 200, stringifyYAML(CONFIGS[name]), 'text/yaml');
-          } else {
+          if (!source) {
             send(res, 404, 'Unknown configuration', 'text/plain');
+          } else if (source.status) {
+            send(res, source.status, 'Not found', 'text/plain');
+          } else if (source.raw !== undefined) {
+            send(res, 200, source.raw, 'text/yaml');
+          } else {
+            const config = source.build?.(await readBaseConfig(SITE_PATH));
+
+            send(res, 200, stringifyYAML(config), 'text/yaml');
+          }
+        } else if (pathname === `${SITE_PATH}/seed/manifest.json`) {
+          sendJSON(res, { files: await listSeedFiles() });
+        } else if (pathname.startsWith(`${SITE_PATH}/`)) {
+          // A file of the demo site: sample content, the API examples or the logo
+          const filePath = resolveSiteFile(
+            decodeURIComponent(pathname.slice(SITE_PATH.length + 1)),
+          );
+
+          if (filePath) {
+            send(res, 200, await readFile(filePath), getContentType(filePath));
+          } else {
+            send(res, 404, 'Not found', 'text/plain');
           }
         } else if (pathname.startsWith(`${BASE_PATH}/api/`)) {
           await handleAPI(pathname.slice(`${BASE_PATH}/api/`.length), url, req, res);

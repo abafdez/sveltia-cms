@@ -146,8 +146,6 @@ const state = {
   items: new Map(),
   /** @type {Scenario[]} */
   scenarios: [],
-  /** @type {Record<string, string>} */
-  files: {},
   index: 0,
   /**
    * Keys on the current screen, in reading order, visible ones first.
@@ -163,6 +161,11 @@ const state = {
    */
   seen: new Set(),
   running: false,
+  /**
+   * Whether the demo site checkout was found, and where it was looked for.
+   * @type {{ found: boolean, dir: string }}
+   */
+  demo: { found: false, dir: '' },
   /**
    * Keys each scenario showed when it last ran, from any review or `pnpm l10n:coverage`.
    * @type {Record<string, { keys: string[], error?: string }>}
@@ -600,7 +603,7 @@ const loadData = async () => {
   state.sourceLocale = data.sourceLocale;
   state.items = new Map(data.items.map((/** @type {ReviewItem} */ item) => [item.key, item]));
   state.scenarios = groupByBoot(data.scenarios);
-  state.files = data.files;
+  state.demo = data.demo;
   state.coverage = data.coverage ?? {};
 
   const select = /** @type {HTMLSelectElement} */ ($('#locale'));
@@ -622,9 +625,25 @@ const seedRepository = async () => {
   await root.removeEntry('sveltia-cms-test', { recursive: true }).catch(() => undefined);
 
   const repo = await root.getDirectoryHandle('sveltia-cms-test', { create: true });
+  const manifest = await fetch('/l10n-review/site/seed/manifest.json');
+
+  if (!manifest.ok) {
+    throw new Error('The list of sample files couldn’t be loaded.');
+  }
+
+  /** @type {{ files: string[] }} */
+  const { files } = await manifest.json();
 
   await Promise.all(
-    Object.entries(state.files).map(async ([path, content]) => {
+    files.map(async (/** @type {string} */ path) => {
+      const response = await fetch(
+        `/l10n-review/site/seed/${path.split('/').map(encodeURIComponent).join('/')}`,
+      );
+
+      if (!response.ok) {
+        throw new Error(`The sample file ${path} couldn’t be loaded.`);
+      }
+
       const segments = path.split('/');
       const name = /** @type {string} */ (segments.pop());
 
@@ -635,7 +654,7 @@ const seedRepository = async () => {
 
       const writable = await (await dir.getFileHandle(name, { create: true })).createWritable();
 
-      await writable.write(content);
+      await writable.write(await response.blob());
       await writable.close();
     }),
   );
@@ -672,9 +691,9 @@ const waitForMessage = (frame, match) =>
  * @returns {string} Key.
  */
 const getBootKey = (frame, boot = {}) => {
-  const { config = 'sample', signIn = true, mocks = [] } = boot;
+  const { config = 'sample', signIn = true, demo = false, devMode = false, mocks = [] } = boot;
 
-  return JSON.stringify({ config, signIn, mocks, locale: frame.locale });
+  return JSON.stringify({ config, signIn, demo, devMode, mocks, locale: frame.locale });
 };
 
 /**
@@ -692,13 +711,13 @@ const bootFrame = async (frame, boot = {}) => {
   const start = performance.now();
 
   if (frame.pendingKey !== bootKey) {
-    const { config = 'sample', signIn = true, mocks = [] } = boot;
+    const { config = 'sample', signIn = true, demo = false, devMode = false, mocks = [] } = boot;
 
     const params = new URLSearchParams({
       frame: frame.id,
       locale: frame.locale,
       config,
-      boot: JSON.stringify({ signIn, mocks }),
+      boot: JSON.stringify({ signIn, demo, devMode, mocks }),
     });
 
     const ready = waitForMessage(frame, (data) => data.type === 'ready');
@@ -1730,6 +1749,14 @@ const runCheck = async () => {
   fitFrames();
   setStatus('Starting the app…');
   await seedRepository();
+
+  if (!state.demo.found) {
+    setStatus(
+      `The demo site wasn’t found at ${state.demo.dir}, so most screens have no content. Clone ` +
+        'sveltia/sveltia-cms-demo there, or set SVELTIA_DEMO_DIR to its checkout.',
+      'error',
+    );
+  }
 
   if (CHECK_MODE) {
     await runCheck();
