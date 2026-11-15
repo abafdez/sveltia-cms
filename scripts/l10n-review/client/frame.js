@@ -5,17 +5,20 @@
  */
 
 import { addMessages, locale as appLocale, dictionary } from '@sveltia/i18n';
+import { mount, unmount } from 'svelte';
 
 import { encodeKey, hasMarker, splitMarkedText } from './markers.js';
+import Showcase from './showcase.svelte';
 
 /**
  * A message found on the screen.
  * @typedef {object} ScreenString
  * @property {string} key Message key.
  * @property {string} text Text shown, without markers.
- * @property {'text' | 'hidden' | 'attr' | 'title' | 'console'} kind Where it is: visible text, text
- * hidden from sight but read by assistive technology, an attribute such as `aria-label`, the page
- * title, or a message logged to the browser console.
+ * @property {'text' | 'hidden' | 'attr' | 'title' | 'console' | 'gone'} kind Where it is: visible
+ * text, text hidden from sight but read by assistive technology, an attribute such as `aria-label`,
+ * the page title, a message logged to the browser console, or a notification or announcement that
+ * showed on the screen and has gone since.
  * @property {string} [attr] Attribute name, for the `attr` kind.
  * @property {string} [level] Console method, e.g. `warn`, for the `console` kind.
  * @property {{ x: number, y: number, width: number, height: number }} [rect] Position on the
@@ -34,9 +37,27 @@ const FRAME_ID = params.get('frame') ?? '';
 const LOCALE = params.get('locale') ?? 'en-US';
 const SOURCE_LOCALE = 'en-US';
 /**
- * @type {{ signIn?: boolean, mocks?: { url: string, method?: string, status?: number,
-  json?: any }[] }} */
+ * @type {{ signIn?: boolean, demo?: boolean, devMode?: boolean, git?: string, env?: string[],
+ * services?: string[], mocks?: { url: string, method?: string, status?: number, json?: any }[] }}
+ */
 const BOOT = JSON.parse(params.get('boot') ?? '{}');
+/**
+ * Session of the user signed in to the frame’s Git repository, which the server gives a frame
+ * starting with one.
+ * @type {Record<string, any> | undefined}
+ */
+const SESSION = /** @type {any} */ (window).l10nReviewSession;
+
+/**
+ * Hosts of the requests the frame’s Git repository answers. Keep in sync with `GIT_HOSTS` in
+ * `git.js`.
+ */
+const GIT_HOSTS = [
+  'https://api.github.com/',
+  'https://www.githubstatus.com/',
+  'https://avatars.githubusercontent.com/',
+];
+
 /**
  * Messages with strings the app logged to the console since the current screen opened, or since
  * the app started for the first screen. Some strings only appear there, like configuration
@@ -50,6 +71,11 @@ let consoleEntries = [];
  * @type {{ scenario: string, entries: { level: string, text: string }[] } | undefined}
  */
 let startEntries;
+/**
+ * Whether a scenario has run since the app started. The first one has nothing to reset, and
+ * mustn’t close a dialog the app opened as it started, like the welcome dialog of a demo site.
+ */
+let hasRun = false;
 /**
  * Console methods the app logs with.
  * @type {('log' | 'info' | 'warn' | 'error' | 'debug')[]}
@@ -110,6 +136,82 @@ const CLICKABLE_SELECTOR = [
   '[role="checkbox"]',
   '[role="switch"]',
 ].join(',');
+
+// --- Online services ---------------------------------------------------------------------------
+
+/**
+ * A sample photo of a stock photo service, from the demo’s images.
+ * @param {number} index Index.
+ * @returns {Record<string, any>} Photo, as Unsplash lists it.
+ */
+const createStockPhoto = (index) => {
+  const url = `${window.location.origin}/l10n-review/site/seed/static/images/bruges.webp`;
+
+  return {
+    id: `photo-${index}`,
+    description: 'Canal in Bruges',
+    alt_description: null,
+    urls: { regular: url, thumb: url },
+    user: { username: 'sample', name: 'Sample Photographer' },
+    links: {},
+  };
+};
+
+/**
+ * Online services the app can work with, faked in the frame: each answers its requests, and has
+ * the API key the app needs to use it. Keep in sync with `SERVICES` in `scenarios.js`.
+ * @type {Record<string, { serviceId: string, apiKey: string, test: (url: string) => boolean,
+ * respond: (request: Request) => Promise<Response> }>}
+ */
+const SERVICE_FAKES = {
+  'google-translate': {
+    serviceId: 'google',
+    apiKey: `AIza${'A'.repeat(35)}`,
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    test: (url) => url.startsWith('https://translation.googleapis.com/'),
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    respond: async (request) => {
+      const { q = [], target = '' } = await request.json();
+
+      return Response.json({
+        data: {
+          translations: q.map((/** @type {string} */ text) => ({
+            translatedText: `[${target}] ${text}`,
+          })),
+        },
+      });
+    },
+  },
+  'google-translate-error': {
+    serviceId: 'google',
+    apiKey: `AIza${'A'.repeat(35)}`,
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    test: (url) => url.startsWith('https://translation.googleapis.com/'),
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    respond: async () => Response.json({ error: { message: 'Quota exceeded' } }, { status: 429 }),
+  },
+  unsplash: {
+    serviceId: 'unsplash',
+    apiKey: 'a'.repeat(43),
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    test: (url) => url.startsWith('https://api.unsplash.com/'),
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    respond: async (request) => {
+      const photos = [0, 1, 2].map(createStockPhoto);
+
+      return Response.json(
+        new URL(request.url).pathname.startsWith('/search/')
+          ? { results: photos, total: photos.length, total_pages: 1 }
+          : photos,
+      );
+    },
+  },
+};
+
+/**
+ * Fakes of the services the scenario uses.
+ */
+const services = (BOOT.services ?? []).map((name) => SERVICE_FAKES[name]).filter(Boolean);
 
 // --- Storage ---------------------------------------------------------------------------------
 
@@ -200,21 +302,237 @@ Object.defineProperty(window, 'localStorage', {
     'sveltia-cms.prefs': JSON.stringify({
       locale: LOCALE,
       ...(BOOT.devMode ? { devModeEnabled: true } : {}),
+      // The API keys of the faked online services, which the app needs to use them
+      ...(BOOT.services?.length
+        ? {
+            apiKeys: Object.fromEntries(
+              BOOT.services.map((name) => [
+                SERVICE_FAKES[name]?.serviceId,
+                SERVICE_FAKES[name]?.apiKey,
+              ]),
+            ),
+          }
+        : {}),
     }),
+    // The app signs in on its own with a stored session
+    ...(SESSION ? { 'sveltia-cms.user': JSON.stringify(SESSION) } : {}),
   }),
 });
 
 // The browser language is the frame’s, so the app doesn’t suggest switching to another one in a
-// notice that would shift the screen in one frame only
+// notice that would shift the screen in one frame only. A scenario can set another one below
 Object.defineProperty(navigator, 'language', { configurable: true, value: LOCALE });
 Object.defineProperty(navigator, 'languages', { configurable: true, value: [LOCALE] });
+
+// --- Browser ---------------------------------------------------------------------------------
+
+/**
+ * Browser conditions a scenario starts the app in, faked before the app starts. Keep in sync with
+ * `ENV_CONDITIONS` in `scenarios.js`.
+ * @type {Record<string, () => void>}
+ */
+const ENV_CONDITIONS = {
+  /**
+   * A browser missing a feature the app needs.
+   */
+  'unsupported-browser': () => {
+    // @ts-ignore
+    delete Uint8Array.fromBase64;
+  },
+  /**
+   * A browser without the File System Access API, so no local repository.
+   */
+  'no-local-backend': () => {
+    // @ts-ignore
+    delete Window.prototype.showDirectoryPicker;
+    // @ts-ignore
+    delete window.showDirectoryPicker;
+  },
+  /**
+   * Brave, which turns the File System Access API off by default.
+   */
+  brave: () => {
+    ENV_CONDITIONS['no-local-backend']();
+    Object.defineProperty(navigator, 'userAgentData', {
+      configurable: true,
+      value: { brands: [{ brand: 'Brave', version: '1' }], platform: 'Linux', mobile: false },
+    });
+  },
+  /**
+   * A browser that can’t write to the origin private file system, like Safari before 26.
+   */
+  'test-repo-unsupported': () => {
+    // @ts-ignore
+    delete FileSystemFileHandle.prototype.createWritable;
+  },
+  /**
+   * A page served over HTTP from another host than localhost.
+   */
+  insecure: () => {
+    Object.defineProperty(window, 'isSecureContext', { configurable: true, value: false });
+  },
+  /**
+   * A browser that won’t let the page read the clipboard.
+   */
+  'clipboard-denied': () => {
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    navigator.clipboard.read = async () => {
+      throw new DOMException('Read permission denied.', 'NotAllowedError');
+    };
+  },
+  /**
+   * A clipboard holding text, not an image.
+   */
+  'clipboard-text': () => {
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    navigator.clipboard.read = async () => [new ClipboardItem({ 'text/plain': 'Hello' })];
+  },
+  /**
+   * A user who doesn’t let the page know where they are.
+   */
+  'geolocation-denied': () => {
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    navigator.geolocation.getCurrentPosition = (_success, error) => {
+      error?.(
+        /** @type {GeolocationPositionError} */ ({
+          code: 1,
+          message: 'User denied Geolocation',
+          PERMISSION_DENIED: 1,
+          POSITION_UNAVAILABLE: 2,
+          TIMEOUT: 3,
+        }),
+      );
+    };
+  },
+  /**
+   * A browser without geolocation.
+   */
+  'no-geolocation': () => {
+    // @ts-ignore
+    delete Navigator.prototype.geolocation;
+  },
+  /**
+   * A device with a touch screen and no mouse.
+   */
+  touch: () => {
+    const { matchMedia } = window;
+
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    window.matchMedia = (query) => {
+      const result = matchMedia.call(window, query);
+      const fine = /\(\s*(?:any-)?pointer\s*:\s*fine\s*\)/.test(query);
+      const coarse = /\(\s*(?:any-)?pointer\s*:\s*coarse\s*\)/.test(query);
+
+      if (!fine && !coarse) {
+        return result;
+      }
+
+      // The list never changes, so its listeners are never called
+      return /** @type {MediaQueryList} */ (
+        /** @type {unknown} */ ({
+          matches: coarse,
+          media: query,
+          onchange: null,
+          /**
+           * Add a listener, never called.
+           * @returns {undefined} Nothing.
+           */
+          addEventListener: () => undefined,
+          /**
+           * Remove a listener.
+           * @returns {undefined} Nothing.
+           */
+          removeEventListener: () => undefined,
+          /**
+           * Add a listener, never called.
+           * @returns {undefined} Nothing.
+           */
+          addListener: () => undefined,
+          /**
+           * Remove a listener.
+           * @returns {undefined} Nothing.
+           */
+          removeListener: () => undefined,
+          /**
+           * Dispatch an event, which does nothing.
+           * @returns {boolean} `false`.
+           */
+          dispatchEvent: () => false,
+        })
+      );
+    };
+  },
+  /**
+   * A browser in another language the app is available in, which it suggests switching to.
+   */
+  'browser-language': () => {
+    const language = LOCALE.startsWith('ja') ? 'fr' : 'ja';
+
+    Object.defineProperty(navigator, 'language', { configurable: true, value: language });
+    Object.defineProperty(navigator, 'languages', { configurable: true, value: [language] });
+  },
+};
+
+(BOOT.env ?? []).forEach((name) => {
+  ENV_CONDITIONS[name]?.();
+});
+
+/**
+ * Let the app offer to be installed, as the browser does for an installable site, once the app
+ * listens for it.
+ */
+const offerInstall = () => {
+  const event = new Event('beforeinstallprompt', { cancelable: true });
+
+  window.dispatchEvent(
+    Object.assign(event, {
+      platforms: ['web'],
+      userChoice: Promise.resolve({ outcome: 'dismissed', platform: 'web' }),
+      // eslint-disable-next-line jsdoc/require-jsdoc
+      prompt: async () => ({ outcome: 'dismissed' }),
+    }),
+  );
+};
+
+// --- Leaving ---------------------------------------------------------------------------------
+
+// The app asks before the page is left with unsaved changes, which a screen typing in a field
+// leaves. The review page loads another page in the frame for the next start, and the question
+// would stop it, or in a headless run keep the old page for good: let the frame go without asking
+{
+  const { addEventListener } = window;
+
+  window.addEventListener = /** @type {typeof window.addEventListener} */ (
+    /**
+     * Add an event listener, unless it’s for `beforeunload`.
+     * @param {string} type Event type.
+     * @param {...any} rest Other arguments.
+     */
+    function addListener(type, ...rest) {
+      if (type !== 'beforeunload') {
+        addEventListener.call(this, type, ...rest);
+      }
+    }
+  );
+
+  Object.defineProperty(window, 'onbeforeunload', {
+    configurable: true,
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    get: () => null,
+    /**
+     * Ignore a handler.
+     */
+    set: () => {},
+  });
+}
 
 // --- Requests ----------------------------------------------------------------------------------
 
 const realFetch = window.fetch.bind(window);
 
 /**
- * Answer the requests matching a mock of the scenario with its response.
+ * Answer the requests matching a mock of the scenario with its response, and pass the requests to
+ * GitHub to the frame’s Git repository on the server.
  * @param {RequestInfo | URL} input Request.
  * @param {RequestInit} [init] Options.
  * @returns {Promise<Response>} Response.
@@ -222,6 +540,25 @@ const realFetch = window.fetch.bind(window);
 window.fetch = async (input, init) => {
   const url = input instanceof Request ? input.url : String(input);
   const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+  const service = services.find(({ test }) => test(url));
+
+  if (service) {
+    return service.respond(new Request(input, init));
+  }
+
+  if (BOOT.git && GIT_HOSTS.some((host) => url.startsWith(host))) {
+    const request = new Request(input, init);
+
+    return realFetch(
+      `/l10n-review/git/${encodeURIComponent(FRAME_ID)}?url=${encodeURIComponent(url)}`,
+      {
+        method: request.method,
+        headers: request.headers,
+        body: ['GET', 'HEAD'].includes(request.method) ? undefined : await request.arrayBuffer(),
+        signal: request.signal,
+      },
+    );
+  }
 
   const mock = BOOT.mocks?.find(
     (m) => url.includes(m.url) && (!m.method || m.method.toUpperCase() === method),
@@ -372,6 +709,61 @@ const settle = async ({ quiet = 120, timeout = 3000 } = {}) => {
     requestAnimationFrame(() => requestAnimationFrame(resolve));
   });
 };
+
+// --- Brief messages ----------------------------------------------------------------------------
+
+/**
+ * Elements whose messages may only show for a moment: notifications and screen reader
+ * announcements, which are live regions.
+ */
+const LIVE_SELECTOR = '[role="status"], [role="alert"], [role="log"], [aria-live]';
+/**
+ * Messages that showed in a live region since the current screen opened, keyed with their key, so
+ * a toast that hid itself, or an announcement cleared after it was read, is still listed.
+ * @type {Map<string, string>}
+ */
+let shownBriefly = new Map();
+
+/**
+ * Record the messages of a text node in a live region.
+ * @param {Node} node Node.
+ */
+const recordBrief = (node) => {
+  const nodes =
+    node instanceof Text
+      ? [node]
+      : node instanceof Element
+        ? [...node.querySelectorAll('*')].flatMap((el) =>
+            [...el.childNodes].filter((child) => child instanceof Text),
+          )
+        : [];
+
+  if (node instanceof Element) {
+    nodes.push(...[...node.childNodes].filter((child) => child instanceof Text));
+  }
+
+  nodes.forEach((text) => {
+    if (hasMarker(text.data) && text.parentElement?.closest(LIVE_SELECTOR)) {
+      const texts = new Map(
+        splitMarkedText(text.parentElement.textContent ?? '').map((m) => [m.key, m.text]),
+      );
+
+      splitMarkedText(text.data).forEach(({ key, text: value }) => {
+        shownBriefly.set(key, texts.get(key) ?? value);
+      });
+    }
+  });
+};
+
+new MutationObserver((records) => {
+  records.forEach(({ type, target, addedNodes }) => {
+    if (type === 'characterData') {
+      recordBrief(target);
+    } else {
+      addedNodes.forEach(recordBrief);
+    }
+  });
+}).observe(document.documentElement, { subtree: true, childList: true, characterData: true });
 
 // --- Scanning ----------------------------------------------------------------------------------
 
@@ -597,6 +989,13 @@ const collect = ({ all = false } = {}) => {
     });
   });
 
+  // Notifications and announcements that have gone since they showed
+  shownBriefly.forEach((text, key) => {
+    if (!nodes.has(key)) {
+      strings.push({ key, text, kind: 'gone' });
+    }
+  });
+
   return { strings, nodes };
 };
 
@@ -797,15 +1196,273 @@ const post = (message) => {
 };
 
 /**
+ * What a step acts on: an element showing a message, by its key; a field of the entry editor, by
+ * its key path, e.g. `{ field: 'title' }`, as field labels come from the configuration, not from
+ * messages, optionally with the key of a message in it, e.g. `{ field: 'blocks', key: 'add_x' }`;
+ * an element by its text, for a name that isn’t a message, like a service name; or the item at an
+ * index among the buttons, radios, options and the like in an element showing a message, e.g. `{
+ * in: 'switch_locale', index: 1 }`, for items named in the frame’s language, like languages.
+ * @typedef {string | { field: string, key?: string } | { text: string } | { in: string, index:
+ * number }} StepTarget
+ */
+
+/**
+ * Find a rendered element whose own text is the given text, the innermost one.
+ * @param {string} text Text.
+ * @returns {Element | undefined} Element.
+ */
+const findByText = (text) =>
+  [...document.body.querySelectorAll('*')]
+    .filter(
+      (el) =>
+        isRendered(el) &&
+        [...el.childNodes].some(
+          (node) =>
+            node instanceof Text &&
+            splitMarkedText(node.data).length === 0 &&
+            node.data.trim() === text,
+        ),
+    )
+    .at(-1);
+
+/**
+ * A file a step drops or uploads, made up on the spot.
+ * @typedef {object} SampleFile
+ * @property {string} name File name.
+ * @property {string} [type] Media type.
+ * @property {string} [text] Content. Defaults to the name.
+ * @property {number} [size] Size in bytes, for a file too large to upload: the content is then that
+ * many spaces.
+ */
+
+/**
+ * Find an element carrying a message in its text or an attribute, even if it isn’t rendered: some
+ * buttons only show on hover, like the field options, but a script can click them anyway.
+ * @param {string} key Message key.
+ * @param {Element} [root] Element to look in.
+ * @returns {Element | undefined} Element.
+ */
+const findAnyElement = (key, root = document.body) => {
+  const marker = encodeKey(key);
+
+  return [...root.querySelectorAll('*')].find(
+    (el) =>
+      [...el.attributes].some(({ value }) => value.includes(marker)) ||
+      [...el.childNodes].some((node) => node instanceof Text && node.data.includes(marker)),
+  );
+};
+
+/**
+ * Find what a step acts on, waiting for it to show.
+ * @param {StepTarget} target Target.
+ * @returns {Promise<HTMLElement>} Element.
+ * @throws {Error} If nothing shows it.
+ */
+const findTarget = async (target) => {
+  const element = await waitFor(
+    () =>
+      typeof target === 'string'
+        ? (findElement(target) ?? findAnyElement(target))
+        : 'in' in target
+          ? (findElement(target.in) ?? findAnyElement(target.in))?.querySelectorAll(
+              CLICKABLE_SELECTOR,
+            )[target.index]
+          : 'text' in target
+            ? findByText(target.text)
+            : (() => {
+                // The editor comes before the preview, which shows the same key paths
+                const field = [
+                  ...document.querySelectorAll(`[data-key-path="${CSS.escape(target.field)}"]`),
+                ].find((el) => isRendered(el));
+
+                return field && target.key ? findAnyElement(target.key, field) : field;
+              })(),
+    4000,
+  ).catch(() => {
+    throw new Error(
+      typeof target === 'string'
+        ? `Nothing shows the message “${target}”`
+        : 'in' in target
+          ? `No item ${target.index} in “${target.in}”`
+          : 'text' in target
+            ? `Nothing shows “${target.text}”`
+            : `The entry has no “${target.field}” field on the screen`,
+    );
+  });
+
+  return /** @type {HTMLElement} */ (element);
+};
+
+/**
  * Click an element showing a message.
  * @param {string} key Message key.
  */
 const clickMessage = async (key) => {
-  const element = await waitFor(() => findElement(key), 4000).catch(() => {
-    throw new Error(`Nothing shows the message “${key}”`);
-  });
+  const element = await findTarget(key);
 
   /** @type {HTMLElement} */ (element.closest(CLICKABLE_SELECTOR) ?? element).click();
+};
+
+/**
+ * Selector of the elements text can be typed in.
+ */
+const FIELD_SELECTOR = 'input:not([type="hidden"]), textarea, [contenteditable="true"]';
+
+/**
+ * Find the text field of a target: the target itself, the control its label is for, the field the
+ * label names with `aria-labelledby`, or else the first field inside it or after it in its group.
+ * @param {HTMLElement} element Target.
+ * @returns {HTMLElement | undefined} Field.
+ */
+const findField = (element) => {
+  if (element.matches(FIELD_SELECTOR)) return element;
+
+  const label = element.closest('label');
+
+  if (label?.control) return /** @type {HTMLElement} */ (label.control);
+
+  const labelled = element.id
+    ? document.querySelector(`[aria-labelledby~="${CSS.escape(element.id)}"]`)
+    : null;
+
+  return /** @type {HTMLElement | undefined} */ (
+    (labelled?.matches(FIELD_SELECTOR) ? labelled : labelled?.querySelector(FIELD_SELECTOR)) ??
+      element.querySelector(FIELD_SELECTOR) ??
+      element
+        .closest('[role="group"], [role="dialog"], [role="alertdialog"], fieldset, section')
+        ?.querySelector(FIELD_SELECTOR) ??
+      undefined
+  );
+};
+
+/**
+ * Replace the text of a field, as typing would.
+ * @param {StepTarget} target Field, or what labels it.
+ * @param {string} text Text.
+ * @throws {Error} If the target has no field.
+ */
+const typeText = async (target, text) => {
+  const field = findField(await findTarget(target));
+
+  if (!field) {
+    throw new Error(`No text field for ${JSON.stringify(target)}`);
+  }
+
+  field.focus();
+
+  if (field.isContentEditable) {
+    document.getSelection()?.selectAllChildren(field);
+    document.execCommand('insertText', false, text);
+
+    return;
+  }
+
+  const input = /** @type {HTMLInputElement | HTMLTextAreaElement} */ (field);
+
+  // The setter of the prototype, as a framework may watch the property of the element
+  const { set } = /** @type {PropertyDescriptor} */ (
+    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), 'value')
+  );
+
+  set?.call(input, text);
+  input.dispatchEvent(
+    new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }),
+  );
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+};
+
+/**
+ * Make files to drop or upload.
+ * @param {SampleFile[]} files Files.
+ * @returns {DataTransfer} Data transfer holding the files.
+ */
+const createFiles = (files) => {
+  const transfer = new DataTransfer();
+
+  files.forEach(({ name, type = '', text, size }) => {
+    transfer.items.add(
+      new File([size === undefined ? (text ?? name) : ' '.repeat(size)], name, { type }),
+    );
+  });
+
+  return transfer;
+};
+
+/**
+ * Drag files over an element, and drop them unless only the drag is wanted.
+ * @param {StepTarget} target Drop zone, or an element in it.
+ * @param {SampleFile[]} files Files.
+ * @param {object} [options] Options.
+ * @param {boolean} [options.drop] Whether to drop them.
+ */
+const dragFiles = async (target, files, { drop = true } = {}) => {
+  const element = await findTarget(target);
+  const dataTransfer = createFiles(files);
+  const events = drop ? ['dragenter', 'dragover', 'drop'] : ['dragenter', 'dragover'];
+
+  events.forEach((type) => {
+    element.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer }));
+  });
+};
+
+/**
+ * Choose files with the file input of a button, as the file picker would.
+ * @param {StepTarget} target Button opening the file picker, or an element near the input.
+ * @param {SampleFile[]} files Files.
+ * @throws {Error} If there’s no file input.
+ */
+const uploadFiles = async (target, files) => {
+  const element = await findTarget(target);
+
+  const input = /** @type {HTMLInputElement | null} */ (
+    [element, ...document.querySelectorAll('[role="dialog"], [role="alertdialog"], body')]
+      .map((el) => el.closest('div, section, dialog, body')?.querySelector('input[type="file"]'))
+      .find(Boolean) ?? null
+  );
+
+  if (!input) {
+    throw new Error(`No file input for ${JSON.stringify(target)}`);
+  }
+
+  input.files = createFiles(files).files;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+};
+
+/**
+ * Open the context menu of an element.
+ * @param {StepTarget} target Element.
+ */
+const rightClick = async (target) => {
+  const element = await findTarget(target);
+  const { x, y, width, height } = element.getBoundingClientRect();
+
+  element.dispatchEvent(
+    new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      button: 2,
+      clientX: x + width / 2,
+      clientY: y + height / 2,
+    }),
+  );
+};
+
+/**
+ * Change the frame’s Git repository on the server, e.g. to commit as a colleague.
+ * @param {string} name Name of an action in `GIT_ACTIONS` of `git.js`.
+ * @throws {Error} If the action fails.
+ */
+const runGitAction = async (name) => {
+  const response = await realFetch(`/l10n-review/git/${encodeURIComponent(FRAME_ID)}/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`The Git action “${name}” failed: ${(await response.json()).error}`);
+  }
 };
 
 /**
@@ -833,10 +1490,38 @@ const hasOpenPopup = () =>
  * @returns {string} Text.
  */
 const getScreenSignature = () => document.body.textContent ?? '';
+/**
+ * The Sveltia UI showcase a scenario mounted over the app, removed by the next scenario.
+ * @type {Record<string, any> | undefined}
+ */
+let showcase;
+
+/**
+ * Show the Sveltia UI components the app doesn’t show over the app, with their strings.
+ * @param {{ dialog?: boolean }} props Props of the showcase.
+ */
+const showShowcase = (props) => {
+  showcase = mount(Showcase, { target: document.body, props });
+};
+
+/**
+ * Open a route, and wait for the screen to show it.
+ * @param {string} route Route, e.g. `#/collections/posts`.
+ */
+const goTo = async (route) => {
+  if (window.location.hash === route) return;
+
+  const before = getScreenSignature();
+
+  window.location.hash = route;
+  // The app takes a moment to show the new route, with a transition when an editor closes: wait for
+  // the screen to change, or the scan would find the previous screen
+  await waitFor(() => getScreenSignature() !== before, 3000).catch(() => undefined);
+};
 
 /**
  * Run a scenario: reset what the previous one opened, open the route, run the steps.
- * @param {{ route?: string, steps?: Record<string, string>[] }} scenario Scenario.
+ * @param {{ route?: string, steps?: Record<string, any>[] }} scenario Scenario.
  */
 const runScenario = async ({ route, steps = [] }) => {
   // The first screen keeps what the app logged while starting, also when it runs again
@@ -844,45 +1529,75 @@ const runScenario = async ({ route, steps = [] }) => {
 
   startEntries ??= { scenario: scenarioKey, entries: consoleEntries };
   consoleEntries = startEntries.scenario === scenarioKey ? startEntries.entries : [];
+  // The first screen also keeps what showed while the app started, like a sign-in error
+  shownBriefly = hasRun ? new Map() : shownBriefly;
   outlines = { keys: [] };
   drawOutlines();
+
+  if (showcase) {
+    unmount(showcase);
+    showcase = undefined;
+  }
 
   // Close the menus and dialogs a previous scenario may have opened. Escape is only pressed when
   // one is open: in the content editor it closes the editor, which goes back in the history once
   // its transition ends, after the route below is set, so the app would end up on the previous
   // screen
-  for (let attempt = 0; attempt < 2 && hasOpenPopup(); attempt += 1) {
+  for (let attempt = 0; hasRun && attempt < 2 && hasOpenPopup(); attempt += 1) {
     press('Escape');
     // eslint-disable-next-line no-await-in-loop
     await settle({ quiet: 50, timeout: 1000 });
   }
 
-  document.querySelectorAll('dialog[open]').forEach((dialog) => {
-    /** @type {HTMLDialogElement} */ (dialog).close();
-  });
+  if (hasRun) {
+    document.querySelectorAll('dialog[open]').forEach((dialog) => {
+      /** @type {HTMLDialogElement} */ (dialog).close();
+    });
+  }
 
-  if (route && window.location.hash !== route) {
-    const before = getScreenSignature();
+  hasRun = true;
 
-    window.location.hash = route;
-    // The app takes a moment to show the new route, with a transition when an editor closes: wait
-    // for the screen to change, or the scan would find the previous screen
-    await waitFor(() => getScreenSignature() !== before, 3000).catch(() => undefined);
+  if (route) {
+    await goTo(route);
   }
 
   await settle();
 
   // eslint-disable-next-line no-restricted-syntax
   for (const step of steps) {
+    /* eslint-disable no-await-in-loop */
     if ('click' in step) {
-      // eslint-disable-next-line no-await-in-loop
-      await clickMessage(step.click);
+      const element = await findTarget(step.click);
+
+      /** @type {HTMLElement} */ (element.closest(CLICKABLE_SELECTOR) ?? element).click();
     } else if ('wait' in step) {
-      // eslint-disable-next-line no-await-in-loop
-      await waitFor(() => findElement(step.wait), 4000);
+      await waitFor(() => findElement(step.wait), 6000).catch(() => {
+        throw new Error(`The message “${step.wait}” didn’t show`);
+      });
     } else if ('press' in step) {
       press(step.press);
+    } else if ('type' in step) {
+      await typeText(step.type, step.text ?? '');
+    } else if ('rightClick' in step) {
+      await rightClick(step.rightClick);
+    } else if ('drop' in step) {
+      await dragFiles(step.drop, step.files ?? []);
+    } else if ('dragOver' in step) {
+      await dragFiles(step.dragOver, step.files ?? [{ name: 'photo.jpg', type: 'image/jpeg' }], {
+        drop: false,
+      });
+    } else if ('upload' in step) {
+      await uploadFiles(step.upload, step.files ?? []);
+    } else if ('focus' in step) {
+      (findField(await findTarget(step.focus)) ?? (await findTarget(step.focus))).focus();
+    } else if ('git' in step) {
+      await runGitAction(step.git);
+    } else if ('route' in step) {
+      await goTo(step.route);
+    } else if ('showcase' in step) {
+      showShowcase(step.showcase === true ? {} : step.showcase);
     }
+    /* eslint-enable no-await-in-loop */
 
     // eslint-disable-next-line no-await-in-loop
     await settle();
@@ -1081,13 +1796,21 @@ const nextTask = () =>
     mark('locale');
 
     if (BOOT.signIn !== false) {
-      // A demo site has its own button on the sign-in page
-      await clickMessage(BOOT.demo ? 'start_demo' : 'work_with_test_repo');
+      // With a Git repository, the app signs in with the stored session. A demo site has its own
+      // button on the sign-in page
+      if (!BOOT.git) {
+        await clickMessage(BOOT.demo ? 'start_demo' : 'work_with_test_repo');
+      }
+
       // The main screen has the account menu, as the end-to-end tests also expect
       await waitFor(() => findElement('show_account_menu'), 15000).catch(() => {
-        throw new Error('Signing in with the test repository didn’t finish');
+        throw new Error('Signing in didn’t finish');
       });
       mark('signIn');
+    }
+
+    if (BOOT.env?.includes('installable')) {
+      offerInstall();
     }
 
     await settle();

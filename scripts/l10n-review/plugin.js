@@ -5,6 +5,7 @@ import { stringify as stringifyYAML } from 'yaml';
 
 import { getAppLocales } from '../vite/locales.js';
 
+import { createRepository, handleGitRequest, runGitAction } from './git.js';
 import { getDemoDir, hasDemo, listSeedFiles, readBaseConfig, resolveSiteFile } from './site.js';
 import {
   acceptMessages,
@@ -230,7 +231,7 @@ const getFrameHTML = async (server, url) => {
     throw new Error('The app page has no module script to run the review script before.');
   }
 
-  /** @type {{ demo?: boolean }} */
+  /** @type {{ demo?: boolean, git?: string }} */
   let boot = {};
 
   try {
@@ -239,24 +240,23 @@ const getFrameHTML = async (server, url) => {
     // Start options that can’t be read are left out
   }
 
+  // A frame starting with a Git host gets a new repository, and the session to sign in to it
+  const { session } = boot.git
+    ? await createRepository(String(url.searchParams.get('frame')), boot.git)
+    : {};
+
   // The scripts go right before the app’s, so they run first
   let html = appHTML.replace(
     '<script type="module"',
     [
       `<script>window.l10nReviewMessages = ${messages.replaceAll('<', '\\u003c')};</script>`,
+      ...(session
+        ? [`<script>window.l10nReviewSession = ${JSON.stringify(session)};</script>`]
+        : []),
       `<script type="module" src="${FRAME_SCRIPT}"></script>`,
       '<script type="module"',
     ].join('\n    '),
   );
-
-  if (hasDemo()) {
-    // The demo’s JavaScript API examples: custom previews, editor components, a field type and a
-    // custom page. A module script runs after the app’s, which defines `CMS`
-    html = html.replace(
-      '</body>',
-      `  <script type="module" src="${SITE_PATH}/api.js"></script>\n  </body>`,
-    );
-  }
 
   if (boot.demo) {
     // A seed manifest makes the app run as a demo site. The page has seeded the repository already
@@ -266,7 +266,17 @@ const getFrameHTML = async (server, url) => {
     );
   }
 
-  return server.transformIndexHtml(url.pathname + url.search, html);
+  html = await server.transformIndexHtml(url.pathname + url.search, html);
+
+  // The demo’s JavaScript API examples: custom previews, editor components, a field type and a
+  // custom page. A module script runs after the app’s, which defines `CMS`. It’s added after Vite
+  // transforms the page, as Vite would try to transform it as one of the app’s modules
+  return hasDemo()
+    ? html.replace(
+        '</body>',
+        `  <script type="module" src="${SITE_PATH}/api.js"></script>\n  </body>`,
+      )
+    : html;
 };
 
 /**
@@ -435,6 +445,24 @@ export const l10nReview = () => ({
           } else {
             send(res, 404, 'Not found', 'text/plain');
           }
+        } else if (pathname.startsWith(`${BASE_PATH}/git/`) && pathname.endsWith('/action')) {
+          // A scenario step changing the frame’s repository
+          const { name } = await readJSON(req);
+
+          runGitAction(
+            decodeURIComponent(pathname.slice(`${BASE_PATH}/git/`.length, -'/action'.length)),
+            name,
+          );
+          sendJSON(res, { ok: true });
+        } else if (pathname.startsWith(`${BASE_PATH}/git/`)) {
+          // A request a frame sends to GitHub
+          await handleGitRequest(
+            decodeURIComponent(pathname.slice(`${BASE_PATH}/git/`.length)),
+            url,
+            req,
+            res,
+            (message) => server.config.logger.warn(message),
+          );
         } else if (pathname.startsWith(`${BASE_PATH}/api/`)) {
           await handleAPI(pathname.slice(`${BASE_PATH}/api/`.length), url, req, res);
         } else {

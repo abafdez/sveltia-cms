@@ -7,7 +7,8 @@ import { parse } from 'yaml';
 import { APP_LOCALES_DIR, squashStrings } from '../vite/locales.js';
 import { resolveModuleDir } from '../vite/utils.js';
 
-import { CONFIGS, SCENARIOS } from './scenarios.js';
+import { GIT_ACTIONS, GIT_SETUPS } from './git.js';
+import { CONFIGS, SCENARIOS, STEP_TARGETS } from './scenarios.js';
 
 /**
  * Read the `en-US` message keys of the app and of Sveltia UI, the latter under `_sui`, as the app
@@ -55,14 +56,30 @@ describe('SCENARIOS', () => {
     });
   });
 
+  test('use Git setups and actions that exist', () => {
+    SCENARIOS.forEach(({ id, boot, steps = [] }) => {
+      if (boot?.git) {
+        expect(GIT_SETUPS, id).toHaveProperty(boot.git);
+      }
+
+      steps.forEach((step) => {
+        if ('git' in step) {
+          expect(GIT_ACTIONS, id).toHaveProperty(step.git);
+        }
+      });
+    });
+  });
+
   // Steps find their element by message key: a key renamed or removed upstream breaks the step
   test('only use message keys that exist in en-US', async () => {
     const keys = await readSourceKeys();
 
     SCENARIOS.forEach(({ id, steps = [] }) => {
       steps.forEach((step) => {
-        Object.values(step).forEach((key) => {
-          if (key !== 'Escape' && key !== 'Enter') {
+        Object.entries(step).forEach(([type, target]) => {
+          const key = typeof target === 'string' ? target : (target?.key ?? target?.in);
+
+          if (STEP_TARGETS.includes(type) && typeof key === 'string') {
             expect(keys.has(key), `${id}: ${key}`).toBe(true);
           }
         });

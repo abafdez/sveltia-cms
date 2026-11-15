@@ -25,7 +25,7 @@ import { createLogger, createServer } from 'vite';
 /**
  * Longest a run may take: each group of screens starts the app, which takes up to 20 s.
  */
-const TIMEOUT = 15 * 60 * 1000;
+const TIMEOUT = 45 * 60 * 1000;
 
 /**
  * Print the result for a person to read.
@@ -102,8 +102,11 @@ try {
   browser = await chromium.launch();
 
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+  // `--only github/,workflow/` runs the screens whose ID starts with `github/` or `workflow/` only
+  const onlyIndex = process.argv.indexOf('--only');
+  const only = onlyIndex === -1 ? '' : (process.argv[onlyIndex + 1] ?? '');
 
-  await page.goto(new URL('l10n-review/?check', baseURL).href);
+  await page.goto(new URL(`l10n-review/?check=${encodeURIComponent(only)}`, baseURL).href);
 
   const handle = await page.waitForFunction(
     () => /** @type {any} */ (window).l10nCheckResult,

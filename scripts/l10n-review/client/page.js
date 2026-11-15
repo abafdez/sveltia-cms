@@ -16,7 +16,7 @@ import { MessageFormat } from 'messageformat';
  * @typedef {object} ScreenString
  * @property {string} key Message key.
  * @property {string} text Text shown.
- * @property {'text' | 'hidden' | 'attr' | 'title' | 'console'} kind Where it is.
+ * @property {'text' | 'hidden' | 'attr' | 'title' | 'console' | 'gone'} kind Where it is.
  * @property {string} [attr] Attribute name.
  * @property {string} [level] Console method, for the `console` kind.
  * @property {{ x: number, y: number }} [rect] Position.
@@ -617,6 +617,45 @@ const loadData = async () => {
 };
 
 /**
+ * Folder of the sample files the tool adds to the sample site, under the demo’s files folder.
+ */
+const SAMPLES_DIR = ['static', 'files', 'samples'];
+
+/**
+ * Add a small file of each type the app has a label for, e.g. `sample.pdf` for “PDF document”, so
+ * the asset list shows every label, and one large file for the size units. The files aren’t valid
+ * documents, which the app shows as well, as an unavailable preview.
+ * @param {FileSystemDirectoryHandle} repo Repository folder.
+ */
+const writeSampleFiles = async (repo) => {
+  const dir = await SAMPLES_DIR.reduce(
+    async (parent, segment) => (await parent).getDirectoryHandle(segment, { create: true }),
+    Promise.resolve(repo),
+  );
+
+  const extensions = [...state.items.keys()]
+    .filter((key) => key.startsWith('file_type_labels.'))
+    .map((key) => key.slice('file_type_labels.'.length));
+
+  /**
+   * Write a file.
+   * @param {string} name File name.
+   * @param {BlobPart} content Content.
+   */
+  const write = async (name, content) => {
+    const writable = await (await dir.getFileHandle(name, { create: true })).createWritable();
+
+    await writable.write(new Blob([content]));
+    await writable.close();
+  };
+
+  await Promise.all([
+    ...extensions.map((extension) => write(`sample.${extension}`, `Sample ${extension} file\n`)),
+    write('large-sample.bin', new Uint8Array(1536 * 1024)),
+  ]);
+};
+
+/**
  * Write the sample site to the test repository, which keeps its files in the origin private file
  * system shared by the frames, replacing what a previous session left there.
  */
@@ -659,6 +698,8 @@ const seedRepository = async () => {
       await writable.close();
     }),
   );
+
+  await writeSampleFiles(repo);
 };
 
 // --- Frames ------------------------------------------------------------------------------------
@@ -692,9 +733,30 @@ const waitForMessage = (frame, match) =>
  * @returns {string} Key.
  */
 const getBootKey = (frame, boot = {}) => {
-  const { config = 'sample', signIn = true, demo = false, devMode = false, mocks = [] } = boot;
+  const {
+    config = 'sample',
+    signIn = true,
+    demo = false,
+    devMode = false,
+    git = undefined,
+    mocks = [],
+    env = [],
+    services = [],
+    instance = undefined,
+  } = boot;
 
-  return JSON.stringify({ config, signIn, demo, devMode, mocks, locale: frame.locale });
+  return JSON.stringify({
+    config,
+    signIn,
+    demo,
+    devMode,
+    git,
+    mocks,
+    env,
+    services,
+    instance,
+    locale: frame.locale,
+  });
 };
 
 /**
@@ -712,16 +774,23 @@ const bootFrame = async (frame, boot = {}) => {
   const start = performance.now();
 
   if (frame.pendingKey !== bootKey) {
-    const { config = 'sample', signIn = true, demo = false, devMode = false, mocks = [] } = boot;
+    const { config = 'sample', ...options } = boot;
 
     const params = new URLSearchParams({
       frame: frame.id,
       locale: frame.locale,
       config,
-      boot: JSON.stringify({ signIn, demo, devMode, mocks }),
+      boot: JSON.stringify(options),
     });
 
-    const ready = waitForMessage(frame, (data) => data.type === 'ready');
+    // A start that never reports back, e.g. because the page in the frame couldn’t be replaced,
+    // fails after a while rather than holding up the review, or a coverage run, for good
+    const ready = Promise.race([
+      waitForMessage(frame, (data) => data.type === 'ready'),
+      new Promise((resolve) => {
+        window.setTimeout(() => resolve({ error: 'it didn’t start within 60 s' }), 60_000);
+      }),
+    ]);
 
     frame.bootKey = undefined;
     frame.pendingKey = bootKey;
@@ -907,13 +976,16 @@ const isVisible = (key) =>
 /**
  * Say what carries a string that isn’t visible text.
  * @param {ScreenString} string String.
- * @returns {string} The attribute name, `screen reader`, `page title` or the console method, e.g.
- * `console.warn`.
+ * @returns {string} The attribute name, `screen reader`, `page title`, `shown briefly` for a
+ * notification or announcement that has gone, or the console method, e.g. `console.warn`.
  */
 const getStringLabel = ({ kind, attr, level }) =>
-  ({ attr: attr ?? '', hidden: 'screen reader', console: `console.${level}` })[
-    /** @type {string} */ (kind)
-  ] ?? 'page title';
+  ({
+    attr: attr ?? '',
+    hidden: 'screen reader',
+    console: `console.${level}`,
+    gone: 'shown briefly',
+  })[/** @type {string} */ (kind)] ?? 'page title';
 
 /**
  * Say what carries a message that can’t be seen on the screen.
@@ -1732,9 +1804,14 @@ resizeObserver.observe($('#target'));
 const runCheck = async () => {
   /** @type {{ id: string, title: string, keys: number, error?: string }[]} */
   const scenarios = [];
+  // `?check=github/,workflow/` runs the screens whose ID starts with `github/` or `workflow/` only
+  const only = (new URLSearchParams(window.location.search).get('check') ?? '').split(',');
 
   // eslint-disable-next-line no-restricted-syntax
   for (const [index, { id, title }] of state.scenarios.entries()) {
+    // eslint-disable-next-line no-continue
+    if (!only.some((prefix) => id.startsWith(prefix))) continue;
+
     // eslint-disable-next-line no-await-in-loop
     await openScreen(index);
     scenarios.push({ id, title, keys: state.keys.length, error: state.lastError });
@@ -1785,8 +1862,12 @@ const runCheck = async () => {
   if (CHECK_MODE) {
     await runCheck();
   } else {
+    // `?screen=github/sign-in` opens that screen first
+    const screen = new URLSearchParams(window.location.search).get('screen');
+    const index = state.scenarios.findIndex(({ id }) => id === screen);
+
     buildCards();
-    await openScreen(0, { direction: 1 });
+    await openScreen(Math.max(index, 0), { direction: 1 });
   }
 })().catch((/** @type {any} */ ex) => {
   setStatus(ex.message, 'error');

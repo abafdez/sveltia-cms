@@ -296,6 +296,148 @@ const WARNING_COLLECTION = {
 };
 
 /**
+ * Make a collection with a title field, with other options.
+ * @param {Record<string, any>} options Options, including the name.
+ * @returns {Record<string, any>} Collection.
+ */
+const collection = ({ name, ...options }) => ({
+  name,
+  label: name,
+  folder: `content/${name}`,
+  fields: [{ name: 'title' }],
+  ...options,
+});
+
+/**
+ * Collections with problems in their own options, their storage or their fields.
+ */
+const BROKEN_COLLECTION_OPTIONS = [
+  collection({ name: 'format', format: 'json', extension: 'md' }),
+  collection({
+    name: 'front_matter',
+    format: 'frontmatter',
+    fields: [{ name: 'title' }, { name: 'body', widget: 'number' }],
+  }),
+  collection({ name: 'slash', slug: '{{year}}/{{slug}}' }),
+  collection({ name: 'thumbnail', thumbnail: 'title' }),
+  collection({ name: 'no_thumbnail', thumbnail: 'nothing' }),
+  collection({ name: 'reorder', reorder: { group: 'nothing' } }),
+  collection({ name: 'templates', media_folder: '{{fields.title}}/{{nothing}}' }),
+  collection({
+    name: 'list_options',
+    fields: [{ name: 'title' }, { name: 'list', widget: 'list', field: { name: 'x' }, fields: [] }],
+  }),
+  {
+    name: 'data_md',
+    label: 'Data',
+    file: 'content/{{locale}}/items.md',
+    fields: [{ name: 'title' }],
+  },
+  {
+    name: 'data_options',
+    label: 'Data Options',
+    file: 'content/items.json',
+    nested: { depth: 2 },
+    preview_path: 'items/{{slug}}',
+    fields: [{ name: 'title' }],
+  },
+  {
+    name: 'data_workflow',
+    label: 'Data Workflow',
+    file: 'content/workflow-items.json',
+    fields: [
+      { name: 'title' },
+      {
+        name: 'post',
+        widget: 'relation',
+        collection: 'posts',
+        value_field: '{{slug}}',
+        search_fields: ['title'],
+      },
+    ],
+  },
+  collection({
+    name: 'more_fields',
+    i18n: true,
+    fields: [
+      { name: 'title', i18n: true },
+      { name: 'gallery', widget: 'image', multiple: true, i18n: 'duplicate_if_empty' },
+      { name: 'code', widget: 'code', output_code_only: true, default: { code: 'x' } },
+      {
+        name: 'expression',
+        widget: 'compute',
+        value: '{{fields.title}} +* 2',
+        value_type: 'number',
+      },
+      { name: 'uuid', widget: 'compute', value: '{{uuid}} * 2', value_type: 'number' },
+      { name: 'price', widget: 'number', value_type: 'float', default: 'abc' },
+      {
+        name: 'file',
+        widget: 'relation',
+        collection: '_singletons',
+        file: 'nothing',
+        value_field: 'x',
+        search_fields: ['x'],
+      },
+      { name: 'plain_list', widget: 'list', default: [{ a: 1 }], field: { name: 'x' } },
+      { name: 'keyed', widget: 'list', map_key_field: 'k', fields: [{ name: 'k', i18n: false }] },
+    ],
+  }),
+];
+
+/**
+ * Collections using the `locale` placeholder in their paths without i18n, or wrongly.
+ */
+const BROKEN_LOCALE_PATHS = [
+  collection({ name: 'locale_folder', folder: 'content/{{locale}}/x' }),
+  collection({ name: 'twice', folder: 'content/{{locale}}/{{locale}}', i18n: true }),
+  {
+    name: 'locale_file',
+    label: 'Locale File',
+    files: [{ name: 'a', file: 'content/{{locale}}/a.md', fields: [{ name: 'title' }] }],
+  },
+  collection({
+    name: 'types',
+    fields: [
+      { name: 'title' },
+      {
+        name: 'blocks',
+        widget: 'list',
+        types: [
+          { label: 'Nameless', fields: [{ name: 'a' }] },
+          { name: 'bad name', fields: [{ name: 'a' }] },
+        ],
+      },
+    ],
+  }),
+];
+
+/**
+ * A collection with more options the parser only warns about.
+ */
+const MORE_WARNINGS_COLLECTION = collection({
+  name: 'more_warnings',
+  slug: { template: '{{title}}', auto_increment: true, i18n: true },
+  fields: [
+    { name: 'title' },
+    { name: 'body' },
+    {
+      name: 'date',
+      widget: 'datetime',
+      picker_utc: true,
+      output_utc: true,
+      format: 'YYYY',
+      localize_format: 'xx-YY',
+    },
+    { name: 'greeting', default_localized: { en: 'Hello' } },
+    { name: 'stops', widget: 'list', fields: [{ name: 'a' }] },
+    // Outside the list its `*` stands for
+    { name: 'sum', widget: 'compute', value: '{{fields.stops.*.a}}' },
+    { name: 'intro', widget: 'richtext', multiline: false, buttons: ['bold', 'heading-one'] },
+  ],
+});
+
+/**
  * A way to break the configuration.
  * @typedef {object} ConfigErrorScenario
  * @property {string} name Unique name.
@@ -393,6 +535,72 @@ export const CONFIG_ERROR_SCENARIOS = [
     }),
   },
   {
+    name: 'collection-options',
+    label: 'Collection options, data files and more field options',
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    build: (config) => ({
+      ...config,
+      publish_mode: 'editorial_workflow',
+      collections: [...config.collections, ...BROKEN_COLLECTION_OPTIONS],
+    }),
+  },
+  {
+    name: 'workflow-stages',
+    label: 'Editorial Workflow stages out of order',
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    build: (config) => ({
+      ...config,
+      publish_mode: { name: 'editorial_workflow', stages: ['pending_review', 'draft'] },
+    }),
+  },
+  {
+    name: 'locale-paths',
+    label: 'The locale placeholder without i18n, and variable types',
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    build: ({ i18n: _i18n, ...config }) => ({
+      ...config,
+      collections: [
+        // The demo collections need i18n, which this configuration doesn’t have
+        ...config.collections.filter((/** @type {any} */ c) => !c.i18n),
+        ...BROKEN_LOCALE_PATHS,
+      ],
+    }),
+  },
+  ...[
+    [
+      'github-pkce',
+      'GitHub with PKCE authorization',
+      { name: 'github', repo: 'a/b', auth_type: 'pkce' },
+    ],
+    [
+      'gitlab-pkce',
+      'GitLab with PKCE and no app ID',
+      { name: 'gitlab', repo: 'a/b', auth_type: 'pkce' },
+    ],
+    [
+      'no-auth-methods',
+      'No authentication methods',
+      { name: 'github', repo: 'a/b', auth_methods: [] },
+    ],
+    ['forgejo', 'Forgejo without an API root', { name: 'forgejo', repo: 'a/b' }],
+    ['nameless-backend', 'A backend without a name', {}],
+  ].map(([name, label, backend]) => ({
+    name: /** @type {string} */ (name),
+    label: /** @type {string} */ (label),
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    build: (/** @type {Record<string, any>} */ config) => ({ ...config, backend }),
+  })),
+  {
+    name: 'not-an-object',
+    label: 'A configuration file holding a list',
+    raw: '- name: posts\n- name: pages\n',
+  },
+  {
+    name: 'server-error',
+    label: 'A server error while loading the configuration file',
+    status: 500,
+  },
+  {
     name: 'no-backend',
     label: 'No backend',
     // eslint-disable-next-line jsdoc/require-jsdoc
@@ -410,6 +618,17 @@ export const CONFIG_ERROR_SCENARIOS = [
     warningsOnly: true,
     // eslint-disable-next-line jsdoc/require-jsdoc
     build: (config) => ({ ...config, collections: [...config.collections, WARNING_COLLECTION] }),
+  },
+  {
+    name: 'more-warnings',
+    label: 'More warnings: dates, defaults, slugs, Compute and rich text fields',
+    warningsOnly: true,
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    build: (config) => ({
+      ...config,
+      public_folder: '',
+      collections: [...config.collections, MORE_WARNINGS_COLLECTION],
+    }),
   },
   {
     name: 'unsupported-backend',

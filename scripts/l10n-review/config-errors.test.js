@@ -5,6 +5,7 @@ import { getConfigSchemas, validateConfigSchema } from '$lib/services/config/sch
 import { normalizeConfigTemplates } from '$lib/services/config/templates';
 
 import { CONFIG_ERROR_SCENARIOS } from './config-errors.js';
+import { CONFIGS } from './scenarios.js';
 import { FALLBACK_CONFIG, hasDemo, readBaseConfig } from './site.js';
 
 /**
@@ -48,6 +49,15 @@ describe.each(BASES)('CONFIG_ERROR_SCENARIOS with the %s configuration', (_name,
 
   test('the configuration itself has no errors', () => {
     expect(validate(config).errors).toEqual([]);
+  });
+
+  // The other configurations the screens start the app with, e.g. the GitHub ones
+  test.each(
+    Object.entries(CONFIGS)
+      .filter(([name, { build }]) => build && !name.startsWith('error-'))
+      .map(([name, source]) => [name, source]),
+  )('the %s configuration has no errors', (_configName, source) => {
+    expect(validate(/** @type {any} */ (source).build(config)).errors).toEqual([]);
   });
 
   test.each(CONFIG_ERROR_SCENARIOS.filter(({ build }) => build).map((s) => [s.name, s]))(

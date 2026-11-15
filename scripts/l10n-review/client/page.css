@@ -421,6 +421,11 @@ td {
   --tag: #64748b;
 }
 
+/* A notification or announcement that showed for a moment and has gone */
+.kind[data-kind="shown-briefly"] {
+  --tag: #0891b2;
+}
+
 /* A string the app only logs to the browser console, shown the way the console shows it */
 pre.console,
 code.console {
