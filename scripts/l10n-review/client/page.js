@@ -16,8 +16,9 @@ import { MessageFormat } from 'messageformat';
  * @typedef {object} ScreenString
  * @property {string} key Message key.
  * @property {string} text Text shown.
- * @property {'text' | 'hidden' | 'attr' | 'title'} kind Where it is.
+ * @property {'text' | 'hidden' | 'attr' | 'title' | 'console'} kind Where it is.
  * @property {string} [attr] Attribute name.
+ * @property {string} [level] Console method, for the `console` kind.
  * @property {{ x: number, y: number }} [rect] Position.
  */
 
@@ -97,7 +98,7 @@ document.body.innerHTML = `
     </section>
     <div class="resizer col" id="aside-resizer" title="Drag to resize, double-click to reset"></div>
     <aside>
-      <h2>Hidden text</h2>
+      <h2>Hidden text and console</h2>
       <ul id="hidden"></ul>
     </aside>
     <section id="card-view" aria-label="Strings not on a screen"></section>
@@ -904,6 +905,17 @@ const isVisible = (key) =>
   );
 
 /**
+ * Say what carries a string that isn’t visible text.
+ * @param {ScreenString} string String.
+ * @returns {string} The attribute name, `screen reader`, `page title` or the console method, e.g.
+ * `console.warn`.
+ */
+const getStringLabel = ({ kind, attr, level }) =>
+  ({ attr: attr ?? '', hidden: 'screen reader', console: `console.${level}` })[
+    /** @type {string} */ (kind)
+  ] ?? 'page title';
+
+/**
  * Say what carries a message that can’t be seen on the screen.
  * @param {string} key Message key.
  * @returns {string | undefined} The attribute name, `screen reader` or `page title`, or nothing if
@@ -914,11 +926,7 @@ const getHiddenLabel = (key) => {
 
   const string = [...frames.target.strings, ...frames.source.strings].find((s) => s.key === key);
 
-  if (!string) return undefined;
-
-  if (string.kind === 'attr') return string.attr;
-
-  return string.kind === 'hidden' ? 'screen reader' : 'page title';
+  return string ? getStringLabel(string) : undefined;
 };
 
 /**
@@ -927,7 +935,11 @@ const getHiddenLabel = (key) => {
  * @returns {string} HTML.
  */
 const renderTag = (label) => {
-  const kind = label.startsWith('aria-') ? 'aria' : label.replace(/\W+/g, '-');
+  const kind = label.startsWith('aria-')
+    ? 'aria'
+    : label.startsWith('console.')
+      ? 'console'
+      : label.replace(/\W+/g, '-');
 
   // eslint-disable-next-line no-use-before-define
   return `<span class="kind" data-kind="${escape(kind)}">${escape(label)}</span>`;
@@ -1123,13 +1135,24 @@ const renderList = () => {
 
       const label = getHiddenLabel(key);
 
+      /**
+       * Render the text of the string. One only logged to the console shows as code, like the
+       * console does.
+       * @param {string} text Text.
+       * @returns {string} HTML.
+       */
+      const asText = (text) =>
+        label?.startsWith('console.')
+          ? `<code class="console">${escape(text)}</code>`
+          : escape(text);
+
       return `<tr class="${classes}" data-key="${escape(key)}">
         <td>${index + 1}</td>
         <td><code>${escape(key)}</code>${label ? ` ${renderTag(label)}` : ''}</td>
-        <td>${escape(getShownText(frames.source, key) ?? item.en)}</td>
+        <td>${asText(getShownText(frames.source, key) ?? item.en)}</td>
         <td>${item.status === 'missing' ? `${renderTag('missing')} ` : ''}${
           item.status === 'same' ? `${renderTag('same as English')} ` : ''
-        }${escape(getShownText(frames.target, key) ?? item.value)}</td>
+        }${asText(getShownText(frames.target, key) ?? item.value ?? '')}</td>
         <td>${pending.has(key) ? '' : '✓'}</td>
       </tr>`;
     })
@@ -1139,14 +1162,15 @@ const renderList = () => {
 
   $('#hidden').innerHTML = hidden.length
     ? hidden
-        .map(
-          ({ key, text, kind, attr }) =>
-            `<li data-key="${escape(key)}" class="${key === state.selected ? 'selected' : ''}">
-              ${renderTag(kind === 'attr' ? (attr ?? '') : kind === 'hidden' ? 'screen reader' : 'page title')}
-              ${escape(text)}
+        .map((string) => {
+          const { key, text, kind } = string;
+
+          return `<li data-key="${escape(key)}" class="${key === state.selected ? 'selected' : ''}">
+              ${renderTag(getStringLabel(string))}
+              ${kind === 'console' ? `<pre class="console">${escape(text)}</pre>` : escape(text)}
               <small>${escape(getShownText(frames.source, key) ?? state.items.get(key)?.en)}</small>
-            </li>`,
-        )
+            </li>`;
+        })
         .join('')
     : '<li class="empty">None on this screen</li>';
 

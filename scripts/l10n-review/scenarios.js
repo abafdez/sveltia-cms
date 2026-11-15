@@ -265,6 +265,18 @@ export const SCENARIOS = [
     route: `#/collections/examples/entries/${name}`,
   })),
   {
+    id: 'fields/richtext-style-menu',
+    title: 'Content Editor › Rich text › Text style menu',
+    route: '#/collections/examples/entries/richtext',
+    steps: [{ click: '_sui.text_editor.show_text_style_options' }],
+  },
+  {
+    id: 'fields/richtext-link-dialog',
+    title: 'Content Editor › Rich text › Link dialog',
+    route: '#/collections/examples/entries/richtext',
+    steps: [{ click: '_sui.text_editor.link' }],
+  },
+  {
     id: 'contents/singleton-yaml',
     title: 'Content Editor › Singleton (YAML)',
     route: '#/collections/_singletons/entries/site',
@@ -331,9 +343,19 @@ export const SCENARIOS = [
   })),
 
   // Configuration errors
-  ...CONFIG_ERROR_SCENARIOS.map(({ name, label }) => ({
-    id: `config/${name}`,
-    title: `Configuration errors › ${label}`,
-    boot: { config: `error-${name}`, signIn: false },
-  })),
+  ...CONFIG_ERROR_SCENARIOS.map(({ name, label, warningsOnly }) =>
+    // With warnings only, the app starts, and logs them to the console
+    warningsOnly
+      ? {
+          id: `config/${name}`,
+          title: `Configuration warnings › ${label}`,
+          boot: { config: `error-${name}` },
+          route: '#/collections/posts',
+        }
+      : {
+          id: `config/${name}`,
+          title: `Configuration errors › ${label}`,
+          boot: { config: `error-${name}`, signIn: false },
+        },
+  ),
 ];

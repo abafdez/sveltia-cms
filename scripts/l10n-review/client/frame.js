@@ -13,9 +13,11 @@ import { encodeKey, hasMarker, splitMarkedText } from './markers.js';
  * @typedef {object} ScreenString
  * @property {string} key Message key.
  * @property {string} text Text shown, without markers.
- * @property {'text' | 'hidden' | 'attr' | 'title'} kind Where it is: visible text, text hidden from
- * sight but read by assistive technology, an attribute such as `aria-label`, or the page title.
+ * @property {'text' | 'hidden' | 'attr' | 'title' | 'console'} kind Where it is: visible text, text
+ * hidden from sight but read by assistive technology, an attribute such as `aria-label`, the page
+ * title, or a message logged to the browser console.
  * @property {string} [attr] Attribute name, for the `attr` kind.
+ * @property {string} [level] Console method, e.g. `warn`, for the `console` kind.
  * @property {{ x: number, y: number, width: number, height: number }} [rect] Position on the
  * screen.
  */
@@ -35,6 +37,47 @@ const SOURCE_LOCALE = 'en-US';
  * @type {{ signIn?: boolean, mocks?: { url: string, method?: string, status?: number,
   json?: any }[] }} */
 const BOOT = JSON.parse(params.get('boot') ?? '{}');
+/**
+ * Messages with strings the app logged to the console since the current screen opened, or since
+ * the app started for the first screen. Some strings only appear there, like configuration
+ * warnings.
+ * @type {{ level: string, text: string }[]}
+ */
+let consoleEntries = [];
+/**
+ * What the app logged while starting, kept for the first screen, and for that screen again when
+ * the page runs it once more in the same frame: the app doesn’t log it twice.
+ * @type {{ scenario: string, entries: { level: string, text: string }[] } | undefined}
+ */
+let startEntries;
+/**
+ * Console methods the app logs with.
+ * @type {('log' | 'info' | 'warn' | 'error' | 'debug')[]}
+ */
+const CONSOLE_METHODS = ['log', 'info', 'warn', 'error', 'debug'];
+
+// Record the messages with strings, then log them as usual
+/* eslint-disable no-console */
+CONSOLE_METHODS.forEach((level) => {
+  const original = console[level].bind(console);
+
+  /**
+   * Log a message, recording it if it has strings.
+   * @param {...any} args Arguments of the console method.
+   */
+  console[level] = (...args) => {
+    const text = args
+      .map((arg) => (typeof arg === 'string' ? arg : arg instanceof Error ? arg.message : ''))
+      .join(' ');
+
+    if (hasMarker(text) && !consoleEntries.some((entry) => entry.text === text)) {
+      consoleEntries = [...consoleEntries, { level, text }].slice(-100);
+    }
+
+    original(...args);
+  };
+});
+/* eslint-enable no-console */
 
 /**
  * Attributes whose text is announced or shown by the browser.
@@ -548,6 +591,12 @@ const collect = ({ all = false } = {}) => {
     strings.push({ key, text, kind: 'title' });
   });
 
+  consoleEntries.forEach(({ level, text: message }) => {
+    splitMarkedText(message).forEach(({ key, text }) => {
+      strings.push({ key, text, kind: 'console', level });
+    });
+  });
+
   return { strings, nodes };
 };
 
@@ -790,6 +839,11 @@ const getScreenSignature = () => document.body.textContent ?? '';
  * @param {{ route?: string, steps?: Record<string, string>[] }} scenario Scenario.
  */
 const runScenario = async ({ route, steps = [] }) => {
+  // The first screen keeps what the app logged while starting, also when it runs again
+  const scenarioKey = JSON.stringify({ route, steps });
+
+  startEntries ??= { scenario: scenarioKey, entries: consoleEntries };
+  consoleEntries = startEntries.scenario === scenarioKey ? startEntries.entries : [];
   outlines = { keys: [] };
   drawOutlines();
 

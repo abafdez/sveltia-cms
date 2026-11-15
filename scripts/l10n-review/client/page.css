@@ -417,6 +417,31 @@ td {
   --tag: #16a34a;
 }
 
+.kind[data-kind="console"] {
+  --tag: #64748b;
+}
+
+/* A string the app only logs to the browser console, shown the way the console shows it */
+pre.console,
+code.console {
+  border-radius: 4px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font:
+    12px/1.4 ui-monospace,
+    monospace;
+}
+
+pre.console {
+  margin: 2px 0 0;
+  padding: 4px 6px;
+  white-space: pre-wrap;
+}
+
+code.console {
+  padding: 1px 4px;
+}
+
 .kind[data-kind="missing"] {
   --tag: var(--error);
 }

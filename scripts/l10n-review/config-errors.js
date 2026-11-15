@@ -278,10 +278,29 @@ const BROKEN_I18N_COLLECTIONS = [
 ];
 
 /**
+ * A collection with options the parser only warns about, so the app still starts, and logs the
+ * warnings to the console.
+ */
+const WARNING_COLLECTION = {
+  name: 'warnings',
+  label: 'Warnings',
+  folder: 'content/warnings',
+  unknown_option: true,
+  fields: [
+    { name: 'title' },
+    { name: 'self', widget: 'compute', value: '{{fields.self}}' },
+    { name: 'cycle_a', widget: 'compute', value: '{{fields.cycle_b}}' },
+    { name: 'cycle_b', widget: 'compute', value: '{{fields.cycle_a}}' },
+    { name: 'date', widget: 'datetime', localize_format: true },
+  ],
+};
+
+/**
  * A way to break the configuration.
  * @typedef {object} ConfigErrorScenario
  * @property {string} name Unique name.
  * @property {string} label What breaks.
+ * @property {boolean} [warningsOnly] Whether it only has warnings, so the app starts with it.
  * @property {(config: Record<string, any>) => Record<string, any>} [build] Function returning the
  * broken configuration from the sample one.
  * @property {string} [raw] Content to serve instead of a configuration, for a file that can’t be
@@ -384,6 +403,13 @@ export const CONFIG_ERROR_SCENARIOS = [
     label: 'A backend that’s no longer supported',
     // eslint-disable-next-line jsdoc/require-jsdoc
     build: (config) => ({ ...config, backend: { name: 'git-gateway' } }),
+  },
+  {
+    name: 'warnings',
+    label: 'Warnings only: the app starts, and logs them to the console',
+    warningsOnly: true,
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    build: (config) => ({ ...config, collections: [...config.collections, WARNING_COLLECTION] }),
   },
   {
     name: 'unsupported-backend',

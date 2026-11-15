@@ -51,11 +51,16 @@ describe.each(BASES)('CONFIG_ERROR_SCENARIOS with the %s configuration', (_name,
   });
 
   test.each(CONFIG_ERROR_SCENARIOS.filter(({ build }) => build).map((s) => [s.name, s]))(
-    'the %s scenario shows errors',
+    'the %s scenario shows errors, or only warnings',
     (_scenarioName, scenario) => {
-      const { errors } = validate(/** @type {any} */ (scenario).build(config));
+      const { errors, warnings } = validate(/** @type {any} */ (scenario).build(config));
 
-      expect(errors.length).toBeGreaterThan(0);
+      if (scenario.warningsOnly) {
+        expect(errors).toEqual([]);
+        expect(warnings.length).toBeGreaterThan(0);
+      } else {
+        expect(errors.length).toBeGreaterThan(0);
+      }
     },
   );
 });

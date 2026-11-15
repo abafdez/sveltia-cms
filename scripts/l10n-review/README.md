@@ -19,7 +19,7 @@ pnpm l10n:coverage            # runs every screen headless and reports what they
 
 ## Using it
 
-The page has a preview of the current screen (two panes side by side, or one at a time), a panel with the strings that can’t be seen (`aria-label`, `placeholder`, `title`, text for screen readers, the page title), and the list of strings on the screen, with their key, English text and translation.
+The page has a preview of the current screen (two panes side by side, or one at a time), a panel with the strings that can’t be seen (`aria-label`, `placeholder`, `title`, text for screen readers, the page title, and messages the app logs to the browser console), and the list of strings on the screen, with their key, English text and translation. A console message shows as code, with a `console.warn` style tag: the first screen after the app starts also has what it logged while starting, like configuration warnings.
 
 | Key | Action |
 | --- | --- |
@@ -62,6 +62,7 @@ Since v1:
 - Every string is reviewable: the strings no screen shows come after the screens, on cards, with their group heading and note. The sections, group headings and notes are read from the comments of `en-US.yaml`.
 - `pnpm l10n:coverage` reports the screens to fix and the strings no screen shows, by section. The first run: 88 of 1,215 strings on a screen, in 31 s.
 - The demo site is the sample site, and there are 70 screens: the sign-in pages and the demo welcome dialog, the entry list with its sort, filter and group menus, table and grid views, selection and delete confirmation, a nested collection, collection limits, new entries with validation errors, a multilingual entry with its menus, an entry for each of the 19 field types, the YAML, JSON and TOML singletons, the asset library with its list view and asset details, the account and help menus, keyboard shortcuts, each Settings panel, and 14 broken configurations showing 110 of the configuration messages. 367 of 1,215 strings are on a screen (30%), in about 2.5 minutes.
+- Strings the app only logs to the console count as shown, with the console as their context. A configuration with warnings only, so the app starts and logs them, shows the configuration warnings. The rich text editor’s text style menu and link dialog have screens of their own. 73 screens, 389 strings on a screen (32%).
 
 Not done yet: see [Work left](#work-left).
 
@@ -106,7 +107,7 @@ Upstream moves fast. These are the places that can break or go stale, from the m
 1. **The end-to-end tests as a source of context.** Upstream’s 168 Playwright test files drive the app through assets, every field type, save errors, the workflow, sign-in and bulk editing. Run once with the strings tagged, they would record where each string appears, with a screenshot of it in context, so a card shows the real spot in the interface. Upstream keeps the tests up to date, so this costs nothing to maintain here.
 2. **Mocked backends.** A GitHub configuration shows the other sign-in strings (42 left), and the editorial workflow (80) needs a mocked GitHub API, which the end-to-end tests already have (`e2e/fixtures/github.js`).
 3. **Extending the demo site**, where a screen needs content it lacks: small sample files of the common types (images, video, audio, documents, data) would show the 52 file type labels on the asset list view, for example.
-4. **More screens and configurations**, in the order `pnpm l10n:coverage` gives: the remaining configuration messages (89), the content editor (65), Sveltia UI components (71), the asset library (54) and field widgets (50) mostly need steps that open dialogs and pickers, or errors like failed uploads.
+4. **More screens and configurations**, in the order `pnpm l10n:coverage` gives: the remaining configuration messages, the content editor, the asset library and field widgets mostly need steps that open dialogs and pickers, or errors like failed uploads. Of the Sveltia UI strings, most left are in the rich text editor (tables, alignment, link editing), which a cursor in a table or on a link would show. Components the CMS doesn’t use in these states, like the calendar, could come from the Sveltia UI showcase site in `sveltia/sveltia-ui` (`src/routes/components/`), which has a page per component.
 5. **`pnpm l10n:delta --locale xx`**: write the missing and outdated keys with their English text and comments, for an AI to translate following a checked-in instructions file and per-locale conventions. The result goes in through the same writer and shows in the queue as pending.
 6. **A GitHub Action** that keeps a pinned issue with each locale’s status (translated, missing, outdated, assignee) and comments on a locale’s issue when its strings change, so whoever is assigned to it gets notified. It would share the delta code with `l10n:delta`.
 
@@ -126,4 +127,5 @@ Upstream moves fast. These are the places that can break or go stale, from the m
 - **A save made on a card doesn’t restart a preview.** A string formatted once at start, like a configuration error, changed while a card is shown keeps its old text in the preview when the review goes back to its screen, until the app restarts.
 - **A screen can be scanned mid-transition.** After a route change, the frame waits for the screen to change, then for it to go quiet. A screen passing through another one on the way, like the list shown for a moment while an editor closes, could end the wait early. It hasn’t happened in the coverage runs since the Escape fix.
 - **The page seeds the repository itself.** It copies the demo’s sample files to the browser’s storage before any frame starts, instead of the app’s own seeding, which would run in both frames at once. It doesn’t share the app’s path checks or its limit on parallel downloads.
+- **Small differences between runs.** A coverage run can find a string or two more or less than the previous one, as some screens are scanned while something still changes, like a menu’s animation.
 - **Removed keys linger.** A key deleted from a locale file stays in the preview until the app restarts, as adding messages never removes any.
