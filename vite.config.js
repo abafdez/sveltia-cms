@@ -7,6 +7,7 @@ import Sonda from 'sonda/vite';
 import { defineConfig } from 'vite';
 import { defaultExclude } from 'vitest/config';
 
+import { l10nReview } from './scripts/l10n-review/plugin.js';
 import { buildChunks, collectSharedModules } from './scripts/vite/chunks.js';
 import { getAppLocales, getDayjsLocales, yamlToJS } from './scripts/vite/locales.js';
 import { buildNpm } from './scripts/vite/npm-build.js';
@@ -152,6 +153,8 @@ export default defineConfig({
   },
   plugins: [
     ...getSharedPlugins({ cdn: true }),
+    // Localization review tool, only on the dev server with `pnpm l10n`
+    l10nReview(),
     copyPackageFiles(),
     generateExtraFiles(),
     buildChunks({ resolve: SHARED_RESOLVE }),

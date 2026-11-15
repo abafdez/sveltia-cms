@@ -1,0 +1,486 @@
+:root {
+  --bg: #f8fafc;
+  --panel: #fff;
+  --text: #0f172a;
+  --muted: #64748b;
+  --border: #e2e8f0;
+  --accent: #3b82f6;
+  --selected: #f59e0b;
+  --ok: #16a34a;
+  --error: #dc2626;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1120;
+    --panel: #111827;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --border: #1f2937;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) 8px minmax(0, var(--footer-height, 38vh));
+  background: var(--bg);
+  color: var(--text);
+  font:
+    13px/1.4 system-ui,
+    sans-serif;
+}
+
+header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+header h1 {
+  margin: 0;
+  font-size: 14px;
+}
+
+header nav {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+header > * {
+  white-space: nowrap;
+}
+
+#title {
+  flex: 1;
+  min-width: 12em;
+  white-space: normal;
+}
+
+header .view {
+  display: flex;
+  gap: 4px;
+}
+
+header .view button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+#timing,
+#progress {
+  color: var(--muted);
+}
+
+main {
+  display: grid;
+  grid-template-columns:
+    minmax(0, var(--source-share, 1fr)) 8px minmax(0, var(--target-share, 1fr)) 8px
+    var(--aside-width, 280px);
+  min-height: 0;
+  padding: 8px 8px 0;
+}
+
+#source-pane {
+  grid-column: 1;
+}
+
+#split-resizer {
+  grid-column: 2;
+}
+
+#target-pane {
+  grid-column: 3;
+}
+
+#aside-resizer {
+  grid-column: 4;
+}
+
+aside {
+  grid-column: 5;
+}
+
+/* Edges between the panels, dragged to resize them */
+.resizer {
+  position: relative;
+  touch-action: none;
+}
+
+.resizer.col {
+  cursor: col-resize;
+}
+
+.resizer.row {
+  margin: 0 8px;
+  cursor: row-resize;
+}
+
+.resizer::after {
+  position: absolute;
+  border-radius: 2px;
+  content: "";
+}
+
+.resizer.col::after {
+  inset: 0 3px;
+}
+
+.resizer.row::after {
+  inset: 3px 0;
+}
+
+.resizer:hover::after,
+.resizer.active::after {
+  background: var(--accent);
+}
+
+body.resizing {
+  user-select: none;
+}
+
+body.resizing iframe {
+  pointer-events: none;
+}
+
+/* Without the hidden text panel */
+body.no-aside main {
+  grid-template-columns: minmax(0, var(--source-share, 1fr)) 8px minmax(0, var(--target-share, 1fr));
+}
+
+body.no-aside :is(aside, #aside-resizer) {
+  display: none;
+}
+
+/* One pane at a time: both stay laid out, in the same cell, so scans and outlines keep working in
+   the one not shown */
+body.single main {
+  grid-template-columns: minmax(0, 1fr) 8px var(--aside-width, 280px);
+}
+
+body.single.no-aside main {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body.single .pane {
+  grid-row: 1;
+  grid-column: 1;
+}
+
+body.single #split-resizer {
+  display: none;
+}
+
+body.single #aside-resizer {
+  grid-column: 2;
+}
+
+body.single aside {
+  grid-column: 3;
+}
+
+body.single .pane.off {
+  visibility: hidden;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+h2 {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.viewport {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.viewport iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 0;
+  transform-origin: 0 0;
+}
+
+/* The frame pair starting the app the next screen needs */
+.viewport iframe.spare {
+  visibility: hidden;
+}
+
+aside {
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+aside ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+aside li {
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+aside li.selected {
+  outline: 2px solid var(--selected);
+}
+
+aside li small {
+  display: block;
+  color: var(--muted);
+}
+
+aside .kind {
+  margin-right: 4px;
+}
+
+aside .empty {
+  color: var(--muted);
+  cursor: default;
+}
+
+footer {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 8px;
+}
+
+/* The list scrolls, while the editor and the keys stay in sight */
+footer .list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+footer .help {
+  margin: 0;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+
+#status:empty {
+  display: none;
+}
+
+#status {
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+#status.error {
+  background: color-mix(in srgb, var(--error) 15%, transparent);
+  color: var(--error);
+}
+
+table {
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+/* While measuring the width each column needs to show its text on one line */
+table.measuring {
+  width: max-content !important;
+  table-layout: auto;
+}
+
+table.measuring :is(th, td) {
+  white-space: nowrap;
+}
+
+thead th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  background: var(--bg);
+}
+
+/* Edges of the list columns, dragged to resize them */
+.col-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.col-resizer::after {
+  position: absolute;
+  inset: 4px 0 4px 5px;
+  border-radius: 2px;
+  content: "";
+}
+
+.col-resizer:hover::after,
+.col-resizer.active::after {
+  background: var(--accent);
+}
+
+td {
+  overflow-wrap: anywhere;
+}
+
+/* Zebra stripes, to tell the rows apart */
+#strings tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+th,
+td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+#strings tr[data-key] {
+  cursor: pointer;
+}
+
+#strings tr.reviewed {
+  color: var(--muted);
+}
+
+#strings tbody tr.selected {
+  background: color-mix(in srgb, var(--selected) 18%, transparent);
+}
+
+/* Tags, color-coded by what they stand for */
+.kind {
+  --tag: var(--muted);
+
+  padding: 0 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--tag) 18%, transparent);
+  color: color-mix(in srgb, var(--tag) 75%, var(--text));
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.kind[data-kind="aria"] {
+  --tag: #3b82f6;
+}
+
+.kind[data-kind="placeholder"] {
+  --tag: #8b5cf6;
+}
+
+.kind[data-kind="title"] {
+  --tag: #0d9488;
+}
+
+.kind[data-kind="alt"] {
+  --tag: #db2777;
+}
+
+.kind[data-kind="screen-reader"] {
+  --tag: #d97706;
+}
+
+.kind[data-kind="page-title"] {
+  --tag: #16a34a;
+}
+
+.kind[data-kind="missing"] {
+  --tag: var(--error);
+}
+
+.kind[data-kind="same-as-English"] {
+  --tag: #ea580c;
+}
+
+#strings td:last-child {
+  color: var(--ok);
+}
+
+#editor {
+  flex: none;
+  max-height: 70%;
+  margin-top: 8px;
+  overflow: auto;
+  padding: 8px;
+  border: 2px solid var(--selected);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+#editor pre {
+  margin: 4px 0;
+  white-space: pre-wrap;
+}
+
+/* The original text, to translate from */
+#editor .source {
+  margin: 6px 0;
+  padding: 6px 8px;
+  border-left: 4px solid var(--accent);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+#editor .source pre {
+  margin: 4px 0 0;
+  font-size: 14px;
+}
+
+#editor .comment {
+  color: var(--muted);
+}
+
+#editor textarea {
+  width: 100%;
+  font:
+    14px/1.4 ui-monospace,
+    monospace;
+}
+
+#editor .error {
+  color: var(--error);
+}
+
+.help {
+  color: var(--muted);
+}
+
+kbd {
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+}

@@ -11,7 +11,8 @@ import { resolveModuleDir } from './utils.js';
 /**
  * Path to the app’s locale files.
  */
-const APP_LOCALES_DIR = 'src/lib/locales';
+export const APP_LOCALES_DIR = 'src/lib/locales';
+
 /**
  * Path to the generated locale files.
  */
@@ -47,7 +48,7 @@ export const getDayjsLocales = () =>
  * @param {unknown} value The value to process.
  * @returns {unknown} The processed value.
  */
-const squashStrings = (value) => {
+export const squashStrings = (value) => {
   if (typeof value === 'string') {
     return value
       .replace(/\s*\n\s*/g, ' ')
