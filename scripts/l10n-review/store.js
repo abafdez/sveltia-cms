@@ -31,7 +31,9 @@ import { resolveModuleDir } from '../vite/utils.js';
  * @typedef {object} MessageEntry
  * @property {string} raw Value as written in the file, e.g. a multiline MF2 message.
  * @property {string} value Value as the app sees it, with the whitespace squashed.
- * @property {string} [comment] Comment written above the message, if any.
+ * @property {string} [comment] Note on the message, written right above it, if any.
+ * @property {string} [section] Title of the section of the file the message is in, if any.
+ * @property {string} [group] Heading of the group of messages it’s in, if any.
  */
 
 /**
@@ -46,7 +48,9 @@ import { resolveModuleDir } from '../vite/utils.js';
  * @property {string} enRaw Source text as written.
  * @property {string | undefined} value Translation, squashed, if any.
  * @property {string | undefined} raw Translation as written, if any.
- * @property {string | undefined} comment Comment from the source file.
+ * @property {string | undefined} comment Note on the message in the source file.
+ * @property {string | undefined} section Section of the source file the message is in.
+ * @property {string | undefined} group Heading of the group of messages it’s in.
  * @property {'missing' | 'same' | 'translated'} status Translation status.
  * @property {boolean} reviewed Whether the current pair of source text and translation has been
  * accepted.
@@ -141,28 +145,73 @@ const readDocument = async (filePath) => {
 };
 
 /**
- * Get the paragraph of a comment written right above a message, leaving out the section headings
- * and notes separated from it by a blank line.
+ * Regular expression matching a rule of `=` signs, which frames the section titles of a file.
+ */
+const RULE_REGEX = /^=+$/;
+
+/**
+ * Read a comment written above a key. The locale files have three kinds:
+ * - a section title, between two rules of `=` signs, followed by a description;
+ * - a group heading, after a blank line, naming the keys that follow, e.g. `Primary actions`;
+ * - a note on the key, right above it with no blank line, e.g. what a placeholder stands for.
  * @param {string | null | undefined} comment Comment, as the YAML parser gives it: the lines
  * without their `#`, but with the space after it.
- * @returns {string | undefined} Paragraph, if any.
+ * @param {boolean} [spaceBefore] Whether a blank line comes before the comment.
+ * @returns {{ section?: string, group?: string, note?: string }} What the comment holds.
  */
-const getLastParagraph = (comment) => {
-  const lines = (comment ?? '').split('\n').map((line) => line.trim());
-  const start = lines.lastIndexOf('') + 1;
-  const paragraph = lines.slice(start).join('\n').trim();
+export const parseComment = (comment, spaceBefore = false) => {
+  if (!comment) {
+    return {};
+  }
 
-  return paragraph || undefined;
+  const lines = comment.split('\n').map((line) => line.trim());
+  // A blank line between the comment and the key: the comment is about what follows, not the key
+  const blankAfter = lines.at(-1) === '';
+
+  while (lines.at(-1) === '') {
+    lines.pop();
+  }
+
+  const firstRule = lines.findIndex((line) => RULE_REGEX.test(line));
+  const lastRule = lines.findLastIndex((line) => RULE_REGEX.test(line));
+
+  const section =
+    firstRule === -1
+      ? undefined
+      : lines.slice(firstRule + 1).find((line) => line && !RULE_REGEX.test(line));
+
+  const rest = lines.slice(lastRule + 1);
+  const start = rest.lastIndexOf('') + 1;
+  const paragraph = rest.slice(start);
+
+  if (!paragraph.length || (section && start === 0)) {
+    // Nothing more, or the description of the section
+    return { section };
+  }
+
+  if (start > 0 || spaceBefore || blankAfter) {
+    // A group heading, which may go on with a note on the first key on the next lines
+    const [group, ...noteLines] = paragraph;
+
+    return { section, group, note: noteLines.join('\n') || undefined };
+  }
+
+  return { section, note: paragraph.join('\n') };
 };
 
 /**
- * Collect the messages of a locale file, in the order they’re written.
+ * Collect the messages of a locale file, in the order they’re written, with the section, group
+ * and note each one has in the comments.
  * @param {Document | undefined} doc Document.
  * @returns {Map<string, MessageEntry>} Messages keyed with their dot-separated path.
  */
 export const collectEntries = (doc) => {
   /** @type {Map<string, MessageEntry>} */
   const entries = new Map();
+  /** @type {string | undefined} */
+  let section;
+  /** @type {string | undefined} */
+  let group;
 
   /**
    * Walk a map.
@@ -174,16 +223,32 @@ export const collectEntries = (doc) => {
       const { key } = /** @type {{ key: Scalar }} */ (pair);
       const keyPath = `${prefix}${String(key.value)}`;
       const comment = key.commentBefore ?? (index === 0 ? map.commentBefore : undefined);
+      const parsed = parseComment(comment, !!key.spaceBefore);
+
+      if (parsed.section) {
+        section = parsed.section;
+        group = undefined;
+      }
+
+      if (parsed.group) {
+        group = parsed.group;
+      }
 
       if (isMap(pair.value)) {
+        // A group heading inside the map only applies inside it
+        const outerGroup = group;
+
         walk(pair.value, `${keyPath}.`);
+        group = outerGroup;
       } else if (isScalar(pair.value) && pair.value.value !== null) {
         const raw = String(pair.value.value);
 
         entries.set(keyPath, {
           raw,
           value: /** @type {string} */ (squashStrings(raw)),
-          comment: getLastParagraph(comment),
+          comment: parsed.note,
+          section,
+          group,
         });
       }
     });
@@ -287,6 +352,8 @@ export const getReviewItems = async (locale) => {
           value: entry?.value,
           raw: entry?.raw,
           comment: en.comment,
+          section: en.section,
+          group: en.group,
           status,
           reviewed: state[key] === getReviewHash(en.value, entry?.value),
         };
@@ -317,6 +384,66 @@ const queueWrite = (fn) => {
 
   return result;
 };
+
+/**
+ * Path of the coverage file: the message keys each scenario showed when it last ran, whatever the
+ * locale.
+ */
+const COVERAGE_PATH = path.resolve(STATE_DIR, 'coverage.json');
+
+/**
+ * What a scenario showed when it last ran.
+ * @typedef {object} ScenarioCoverage
+ * @property {string[]} keys Keys of the messages on the screen.
+ * @property {string} [error] Why the scenario didn’t finish, if it didn’t.
+ * @property {string} checkedAt When it ran, as an ISO date.
+ */
+
+/**
+ * Read the coverage file.
+ * @returns {Promise<Record<string, ScenarioCoverage>>} Coverage, keyed with the scenario ID.
+ */
+export const readCoverage = async () => {
+  try {
+    return JSON.parse(await readFile(COVERAGE_PATH, 'utf-8'));
+  } catch (/** @type {any} */ ex) {
+    // The coverage is rebuilt as scenarios run, so a broken file can be dropped
+    return ex.code === 'ENOENT' || ex instanceof SyntaxError ? {} : Promise.reject(ex);
+  }
+};
+
+/**
+ * Record what a scenario showed.
+ * @param {string} id Scenario ID.
+ * @param {object} result What it showed.
+ * @param {string[]} result.keys Keys of the messages on the screen.
+ * @param {string} [result.error] Why it didn’t finish, if it didn’t.
+ * @param {string[]} [scenarioIds] IDs of the current scenarios: the others are removed.
+ * @returns {Promise<Record<string, ScenarioCoverage>>} Coverage.
+ */
+export const recordCoverage = (id, { keys, error }, scenarioIds) =>
+  queueWrite(async () => {
+    const coverage = await readCoverage();
+
+    coverage[id] = {
+      keys: [...new Set(keys)].sort(),
+      ...(error ? { error } : {}),
+      checkedAt: new Date().toISOString(),
+    };
+
+    if (scenarioIds) {
+      Object.keys(coverage)
+        .filter((key) => !scenarioIds.includes(key))
+        .forEach((key) => {
+          delete coverage[key];
+        });
+    }
+
+    await mkdir(STATE_DIR, { recursive: true });
+    await writeFile(COVERAGE_PATH, `${JSON.stringify(coverage, null, 2)}\n`);
+
+    return coverage;
+  });
 
 /**
  * Accept messages: store the hash of their current source text and translation.

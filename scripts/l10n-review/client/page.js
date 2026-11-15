@@ -42,6 +42,13 @@ import { MessageFormat } from 'messageformat';
  */
 
 /**
+ * A card listing strings no screen shows, from one section of the source file.
+ * @typedef {object} Card
+ * @property {string} section Section title.
+ * @property {string[]} keys Message keys.
+ */
+
+/**
  * Width of the app in the frames, in CSS pixels. The frames are scaled down to fit, so the app has
  * its desktop layout however narrow the panes are.
  */
@@ -93,6 +100,7 @@ document.body.innerHTML = `
       <h2>Hidden text</h2>
       <ul id="hidden"></ul>
     </aside>
+    <section id="card-view" aria-label="Strings not on a screen"></section>
   </main>
   <div class="resizer row" id="footer-resizer" title="Drag to resize, double-click to reset"></div>
   <footer>
@@ -155,8 +163,27 @@ const state = {
    */
   seen: new Set(),
   running: false,
+  /**
+   * Keys each scenario showed when it last ran, from any review or `pnpm l10n:coverage`.
+   * @type {Record<string, { keys: string[], error?: string }>}
+   */
+  coverage: {},
+  /**
+   * Cards for the strings no screen shows, after the screens.
+   * @type {Card[]}
+   */
+  cards: [],
+  /**
+   * Why the last screen opened didn’t show properly, if it didn’t.
+   * @type {string | undefined}
+   */
+  lastError: undefined,
 };
 
+/**
+ * Whether the page runs every screen for `pnpm l10n:coverage` instead of a review.
+ */
+const CHECK_MODE = new URLSearchParams(window.location.search).has('check');
 /**
  * Key the view settings are remembered under, in this browser only.
  */
@@ -574,6 +601,7 @@ const loadData = async () => {
   state.items = new Map(data.items.map((/** @type {ReviewItem} */ item) => [item.key, item]));
   state.scenarios = groupByBoot(data.scenarios);
   state.files = data.files;
+  state.coverage = data.coverage ?? {};
 
   const select = /** @type {HTMLSelectElement} */ ($('#locale'));
 
@@ -914,6 +942,8 @@ const getShownText = (frame, key) =>
  * Draw the numbered outlines in both frames.
  */
 const drawOutlines = () => {
+  if (document.body.classList.contains('card-mode')) return;
+
   // The pending strings that can be seen, and the selected one, even if it’s an `aria-label` or
   // visually hidden text, which gets a dashed outline around its element: outlining every one of
   // those would bury the screen
@@ -943,18 +973,115 @@ const drawOutlines = () => {
 };
 
 /**
+ * Most strings on a card.
+ */
+const CARD_SIZE = 12;
+
+/**
+ * Get the keys a screen shows: those the scenarios showed when they last ran, and those seen in
+ * this review.
+ * @returns {Set<string>} Keys.
+ */
+const getCoveredKeys = () =>
+  new Set([...state.seen, ...state.scenarios.flatMap(({ id }) => state.coverage[id]?.keys ?? [])]);
+
+/**
+ * Build the cards for the strings no screen shows, in the order of the source files, a section at
+ * a time. Cards with nothing pending are left out.
+ */
+const buildCards = () => {
+  const covered = getCoveredKeys();
+  /** @type {Card[]} */
+  const cards = [];
+  /** @type {Card | undefined} */
+  let card;
+
+  state.items.forEach((item) => {
+    if (covered.has(item.key)) return;
+
+    const section = item.source === 'ui' ? 'Sveltia UI' : (item.section ?? 'Other');
+
+    if (!card || card.section !== section || card.keys.length >= CARD_SIZE) {
+      card = { section, keys: [] };
+      cards.push(card);
+    }
+
+    card.keys.push(item.key);
+  });
+
+  state.cards = cards.filter(({ keys }) => keys.some((key) => !state.items.get(key)?.reviewed));
+};
+
+/**
+ * Get the number of screens, cards included.
+ * @returns {number} Number.
+ */
+const getScreenCount = () => state.scenarios.length + state.cards.length;
+
+/**
  * Show the review progress.
  */
 const renderProgress = () => {
   const items = [...state.items.values()];
   const reviewed = items.filter((item) => item.reviewed).length;
   const missing = items.filter((item) => item.status === 'missing').length;
+  const covered = getCoveredKeys();
+  const offScreen = items.filter(({ key }) => !covered.has(key)).length;
 
   $('#progress').textContent = [
     `${reviewed} / ${items.length} reviewed`,
     `${missing} missing`,
-    `${state.seen.size} seen on screens`,
+    `${offScreen} not on a screen`,
   ].join(' · ');
+};
+
+/**
+ * Show the strings of a card in the main area: with no preview, the notes of the source file are
+ * the context.
+ * @param {Set<string>} pending Keys pending review.
+ */
+const renderCard = (pending) => {
+  const cardView = $('#card-view');
+  const card = state.cards[state.index - state.scenarios.length];
+
+  if (!document.body.classList.contains('card-mode') || !card) {
+    cardView.innerHTML = '';
+
+    return;
+  }
+
+  cardView.innerHTML = `
+    <header>
+      <h2>Not on any screen yet: check these strings from their notes</h2>
+    </header>
+    ${state.keys
+      .map((key, index) => {
+        const item = /** @type {ReviewItem} */ (state.items.get(key));
+
+        const tags = [
+          item.status === 'missing' ? renderTag('missing') : '',
+          item.status === 'same' ? renderTag('same as English') : '',
+          pending.has(key) ? '' : '<span class="done">✓</span>',
+        ].join(' ');
+
+        // A group heading once, above its first string
+        const previous = state.items.get(state.keys[index - 1]);
+        const heading = item.group && item.group !== previous?.group ? item.group : undefined;
+
+        return `${heading ? `<h4>${escape(heading)}</h4>` : ''}
+        <article data-key="${escape(key)}" class="${key === state.selected ? 'selected' : ''}">
+          <h3><span class="n">${index + 1}</span> <code>${escape(key)}</code> ${tags}</h3>
+          ${item.comment ? `<p class="comment">${escape(item.comment)}</p>` : ''}
+          <div class="texts">
+            <div>${renderTag(state.sourceLocale)}<p>${escape(item.en)}</p></div>
+            <div>${renderTag(state.locale)}<p>${escape(item.value ?? '')}</p></div>
+          </div>
+        </article>`;
+      })
+      .join('')}
+  `;
+
+  cardView.querySelector('article.selected')?.scrollIntoView({ block: 'nearest' });
 };
 
 /**
@@ -1006,6 +1133,8 @@ const renderList = () => {
 
   layoutColumns();
   tbody.querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
+
+  renderCard(pending);
   renderProgress();
 };
 
@@ -1038,12 +1167,21 @@ const takeFocus = () => {
 const openScreen = async (index, { direction } = {}) => {
   if (state.running) return;
 
+  if (index >= state.scenarios.length) {
+    // eslint-disable-next-line no-use-before-define
+    openCard(index);
+
+    return;
+  }
+
   state.running = true;
   state.index = index;
+  state.lastError = undefined;
+  document.body.classList.remove('card-mode');
 
   const scenario = state.scenarios[index];
 
-  $('#position').textContent = `${index + 1} / ${state.scenarios.length}`;
+  $('#position').textContent = `${index + 1} / ${getScreenCount()}`;
   $('#title').textContent = scenario.title;
   $('#timing').textContent = '…';
   setStatus('');
@@ -1070,30 +1208,71 @@ const openScreen = async (index, { direction } = {}) => {
 
     const error = results.find((r) => r.error)?.error;
 
-    if (error) setStatus(`This scenario needs fixing: ${error}`, 'error');
+    if (error) {
+      state.lastError = error;
+      setStatus(`This scenario needs fixing: ${error}`, 'error');
+    }
 
     state.keys = getScreenKeys();
     state.keys.forEach((key) => state.seen.add(key));
     state.selected = getPendingKeys()[0] ?? state.keys[0];
   } catch (/** @type {any} */ ex) {
+    state.lastError = ex.message;
     setStatus(ex.message, 'error');
     state.keys = [];
   } finally {
     state.running = false;
   }
 
+  // Remember what the screen shows, so the strings no screen shows can be listed. A screen that
+  // failed shows nothing, so a stale record of it doesn’t count as coverage
+  const coverage = { keys: state.keys, error: state.lastError };
+
+  state.coverage[scenario.id] = coverage;
+  await api('coverage', { scenario: scenario.id, ...coverage }).catch(() => {});
+
   const next = index + (direction ?? 0);
 
-  if (direction && !getPendingKeys().length && next >= 0 && next < state.scenarios.length) {
-    await openScreen(next, { direction });
+  if (direction && !getPendingKeys().length && next >= 0) {
+    // Skipping past the last screen: list the strings no screen has shown so far
+    if (index < state.scenarios.length && next >= state.scenarios.length) {
+      buildCards();
+    }
 
-    return;
+    if (next < getScreenCount()) {
+      await openScreen(next, { direction });
+
+      return;
+    }
   }
 
   renderList();
   drawOutlines();
   takeFocus();
   preload(index);
+};
+
+/**
+ * Open a card of strings no screen shows. There’s no preview: the card shows the notes of the
+ * source file, the English text and the translation instead.
+ * @param {number} index Index of the screen, after the scenarios.
+ */
+const openCard = (index) => {
+  const card = state.cards[index - state.scenarios.length];
+
+  if (!card) return;
+
+  state.index = index;
+  state.lastError = undefined;
+  document.body.classList.add('card-mode');
+  $('#position').textContent = `${index + 1} / ${getScreenCount()}`;
+  $('#title').textContent = `Not on a screen › ${card.section}`;
+  $('#timing').textContent = '';
+  setStatus('');
+  state.keys = card.keys.filter((key) => state.items.has(key));
+  state.selected = getPendingKeys()[0] ?? state.keys[0];
+  renderList();
+  takeFocus();
 };
 
 // --- Editing -----------------------------------------------------------------------------------
@@ -1182,6 +1361,7 @@ const openEditor = () => {
   editor.innerHTML = `
     <div class="meta">
       <code>${escape(item.key)}</code> in <code>${escape(item.file)}</code>
+      ${item.section || item.group ? `<p class="group">${escape([item.section, item.group].filter(Boolean).join(' › '))}</p>` : ''}
       ${item.comment ? `<pre class="comment">${escape(item.comment)}</pre>` : ''}
     </div>
     <div class="source">${renderTag(state.sourceLocale)}<pre>${escape(item.enRaw)}</pre></div>
@@ -1280,7 +1460,12 @@ const leaveScreen = async (index, options) => {
     state.running = false;
   }
 
-  if (index >= 0 && index < state.scenarios.length) {
+  // Moving past the last screen: list the strings no screen has shown so far
+  if (state.index < state.scenarios.length && index >= state.scenarios.length) {
+    buildCards();
+  }
+
+  if (index >= 0 && index < getScreenCount()) {
     await openScreen(index, options);
   } else {
     renderList();
@@ -1327,7 +1512,7 @@ const runKey = (key) => {
   } else if (name === 'Enter') {
     openEditor();
   } else if (name === 'ArrowRight') {
-    if (state.index < state.scenarios.length - 1) leaveScreen(state.index + 1);
+    if (state.index < getScreenCount() - 1) leaveScreen(state.index + 1);
   } else if (name === 'ArrowLeft') {
     if (state.index > 0) leaveScreen(state.index - 1);
   } else if (name === 'ArrowDown') {
@@ -1376,6 +1561,17 @@ $('#strings').addEventListener('click', ({ target }) => {
 
 $('#strings').addEventListener('dblclick', () => openEditor());
 
+$('#card-view').addEventListener('click', ({ target }) => {
+  const article = /** @type {HTMLElement} */ (target).closest('article[data-key]');
+
+  if (article) {
+    state.selected = /** @type {HTMLElement} */ (article).dataset.key;
+    renderList();
+  }
+});
+
+$('#card-view').addEventListener('dblclick', () => openEditor());
+
 $('#hidden').addEventListener('click', ({ target }) => {
   const li = /** @type {HTMLElement} */ (target).closest('li[data-key]');
 
@@ -1389,7 +1585,7 @@ $('#hidden').addEventListener('click', ({ target }) => {
 $('#prev').addEventListener('click', () => state.index > 0 && leaveScreen(state.index - 1));
 $('#next').addEventListener(
   'click',
-  () => state.index < state.scenarios.length - 1 && leaveScreen(state.index + 1),
+  () => state.index < getScreenCount() - 1 && leaveScreen(state.index + 1),
 );
 $('#swap').addEventListener('click', () => runKey('t'));
 $('#layout').addEventListener('click', () => runKey('v'));
@@ -1486,6 +1682,37 @@ const resizeObserver = new ResizeObserver(fitFrames);
 resizeObserver.observe($('#source'));
 resizeObserver.observe($('#target'));
 
+/**
+ * Run every screen, without accepting anything, and give the result to `pnpm l10n:coverage`, which
+ * waits for it.
+ */
+const runCheck = async () => {
+  /** @type {{ id: string, title: string, keys: number, error?: string }[]} */
+  const scenarios = [];
+
+  // eslint-disable-next-line no-restricted-syntax
+  for (const [index, { id, title }] of state.scenarios.entries()) {
+    // eslint-disable-next-line no-await-in-loop
+    await openScreen(index);
+    scenarios.push({ id, title, keys: state.keys.length, error: state.lastError });
+  }
+
+  const covered = getCoveredKeys();
+
+  const uncovered = [...state.items.values()]
+    .filter(({ key }) => !covered.has(key))
+    .map(({ key, source, section, group }) => ({ key, source, section, group }));
+
+  /** @type {any} */ (window).l10nCheckResult = {
+    scenarios,
+    total: state.items.size,
+    covered: state.items.size - uncovered.length,
+    uncovered,
+  };
+
+  setStatus(`Check done: ${uncovered.length} strings aren’t on any screen.`);
+};
+
 // --- Start -------------------------------------------------------------------------------------
 
 (async () => {
@@ -1503,5 +1730,18 @@ resizeObserver.observe($('#target'));
   fitFrames();
   setStatus('Starting the app…');
   await seedRepository();
-  await openScreen(0, { direction: 1 });
-})();
+
+  if (CHECK_MODE) {
+    await runCheck();
+  } else {
+    buildCards();
+    await openScreen(0, { direction: 1 });
+  }
+})().catch((/** @type {any} */ ex) => {
+  setStatus(ex.message, 'error');
+
+  // Let `pnpm l10n:coverage` stop now instead of waiting for its timeout
+  if (CHECK_MODE) {
+    /** @type {any} */ (window).l10nCheckResult = { failure: ex.message };
+  }
+});

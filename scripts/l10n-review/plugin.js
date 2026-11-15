@@ -11,7 +11,9 @@ import {
   getSources,
   readAllLocaleFiles,
   readChangedLocaleFile,
+  readCoverage,
   readEntries,
+  recordCoverage,
   saveMessage,
   SOURCE_LOCALE,
 } from './store.js';
@@ -251,6 +253,7 @@ const handleAPI = async (route, url, req, res) => {
       items: await getReviewItems(locale),
       scenarios: SCENARIOS,
       files: SAMPLE_FILES,
+      coverage: await readCoverage(),
     });
 
     return;
@@ -260,6 +263,26 @@ const handleAPI = async (route, url, req, res) => {
     const { locale, keys } = await readJSON(req);
 
     sendJSON(res, { count: await acceptMessages(checkLocale(locale), keys ?? []) });
+
+    return;
+  }
+
+  if (route === 'coverage' && req.method === 'POST') {
+    const { scenario, keys, error } = await readJSON(req);
+    const { SCENARIOS } = await loadScenarios();
+    const ids = SCENARIOS.map(({ id }) => id);
+
+    if (
+      !ids.includes(scenario) ||
+      !Array.isArray(keys) ||
+      !keys.every((key) => typeof key === 'string') ||
+      (error !== undefined && typeof error !== 'string')
+    ) {
+      throw new Error('A known scenario and the keys it showed are required.');
+    }
+
+    await recordCoverage(scenario, { keys, error }, ids);
+    sendJSON(res, { ok: true });
 
     return;
   }

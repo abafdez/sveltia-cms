@@ -11,31 +11,78 @@ import {
   collectEntries,
   createDocument,
   getReviewHash,
+  parseComment,
   serializeDocument,
   setMessage,
   validateMessage,
 } from './store.js';
 
-const SOURCE = `# Heading
+const SOURCE = `# Read the README
+# ======
+# Section One
+# ======
+# What the section is about.
 
-# Comment of the first message
+# Group heading
 first: First
+# Note on the second message
+second: Second
 group:
-  # Comment of a nested message
+  # Note on a nested message
   # on two lines
   one: One
   two: Two
+
+# Other group
 last: Last
 `;
 
+describe('parseComment()', () => {
+  test('reads a section title between rules and leaves out its description', () => {
+    expect(parseComment(' ===\n Section\n ===\n About it.\n')).toEqual({ section: 'Section' });
+  });
+
+  test('reads a group heading after a blank line, and a note on the next lines', () => {
+    expect(parseComment(' Intro\n\n Heading')).toEqual({ group: 'Heading', note: undefined });
+    expect(parseComment(' Heading\n {$x} is a name', true)).toEqual({
+      group: 'Heading',
+      note: '{$x} is a name',
+    });
+    expect(parseComment(' Heading\n')).toEqual({ group: 'Heading', note: undefined });
+  });
+
+  test('reads a note right above a key', () => {
+    expect(parseComment(' A note\n on two lines')).toEqual({ note: 'A note\non two lines' });
+  });
+
+  test('returns nothing without a comment', () => {
+    expect(parseComment(undefined)).toEqual({});
+  });
+});
+
 describe('collectEntries()', () => {
-  test('flattens nested keys and keeps the last comment paragraph', () => {
+  test('flattens nested keys, with their section, group and note', () => {
     const entries = collectEntries(parseDocument(SOURCE));
 
-    expect([...entries.keys()]).toEqual(['first', 'group.one', 'group.two', 'last']);
-    expect(entries.get('first')?.comment).toBe('Comment of the first message');
-    expect(entries.get('group.one')?.comment).toBe('Comment of a nested message\non two lines');
+    expect([...entries.keys()]).toEqual(['first', 'second', 'group.one', 'group.two', 'last']);
+    expect(entries.get('first')).toMatchObject({ section: 'Section One', group: 'Group heading' });
+    expect(entries.get('first')?.comment).toBeUndefined();
+    expect(entries.get('second')).toMatchObject({
+      group: 'Group heading',
+      comment: 'Note on the second message',
+    });
+    expect(entries.get('group.one')?.comment).toBe('Note on a nested message\non two lines');
     expect(entries.get('group.two')?.comment).toBeUndefined();
+    expect(entries.get('last')).toMatchObject({ section: 'Section One', group: 'Other group' });
+  });
+
+  test('applies a group heading inside a nested map only inside it', () => {
+    const entries = collectEntries(
+      parseDocument('first: First\n\n# Outer\nmap:\n  a: A\n\n  # Inner\n  b: B\nnext: Next\n'),
+    );
+
+    expect(entries.get('map.b')?.group).toBe('Inner');
+    expect(entries.get('next')?.group).toBe('Outer');
   });
 
   test('squashes the whitespace of multiline values as the app does', () => {

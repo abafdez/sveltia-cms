@@ -41,7 +41,7 @@ body {
     sans-serif;
 }
 
-header {
+body > header {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 12px;
@@ -51,18 +51,18 @@ header {
   background: var(--panel);
 }
 
-header h1 {
+body > header h1 {
   margin: 0;
   font-size: 14px;
 }
 
-header nav {
+body > header nav {
   display: flex;
   gap: 4px;
   align-items: center;
 }
 
-header > * {
+body > header > * {
   white-space: nowrap;
 }
 
@@ -72,12 +72,12 @@ header > * {
   white-space: normal;
 }
 
-header .view {
+body > header .view {
   display: flex;
   gap: 4px;
 }
 
-header .view button[aria-pressed="true"] {
+body > header .view button[aria-pressed="true"] {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 15%, transparent);
 }
@@ -483,4 +483,96 @@ kbd {
   border: 1px solid var(--border);
   border-radius: 3px;
   font-size: 11px;
+}
+
+/* Cards of strings no screen shows: the main area shows them instead of the previews */
+#card-view {
+  display: none;
+}
+
+body.card-mode main {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body.card-mode main > :not(#card-view) {
+  display: none;
+}
+
+body.card-mode #card-view {
+  display: block;
+  grid-column: 1 / -1;
+  overflow: auto;
+  padding: 0 4px 8px;
+}
+
+#card-view header h2 {
+  margin: 0;
+}
+
+#card-view header p {
+  margin: 2px 0 8px;
+  color: var(--muted);
+}
+
+#card-view h4 {
+  margin: 12px 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+#card-view article {
+  margin-bottom: 4px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+#card-view article.selected {
+  border-color: var(--selected);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--selected) 40%, transparent);
+}
+
+#card-view h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+#card-view .n {
+  color: var(--muted);
+}
+
+#card-view .done {
+  color: var(--ok);
+}
+
+#card-view .group,
+#card-view .comment {
+  margin: 4px 0 0;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
+#card-view .comment {
+  font-style: italic;
+}
+
+#card-view .texts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+#card-view .texts p {
+  margin: 2px 0 0;
+  font-size: 15px;
+}
+
+#editor .group {
+  margin: 2px 0;
+  color: var(--muted);
 }
