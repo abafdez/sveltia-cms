@@ -23,7 +23,8 @@ import { createLogger, createServer } from 'vite';
  */
 
 /**
- * Longest a run may take: each group of screens starts the app, which takes up to 20 s.
+ * Longest a run may take: each group of screens starts the app, which takes up to 60 s, and a
+ * screen that fails is run a second time.
  */
 const TIMEOUT = 45 * 60 * 1000;
 
@@ -34,12 +35,13 @@ const TIMEOUT = 45 * 60 * 1000;
 const report = ({ scenarios, total, covered, uncovered }) => {
   const broken = scenarios.filter(({ error }) => error);
 
-  console.info(`Screens: ${scenarios.length}, ${broken.length} to fix`);
+  // Every screen was printed as the run went: list the ones to fix again
+  console.info(`\nScreens: ${scenarios.length}, ${broken.length} to fix`);
 
-  scenarios.forEach(({ id, keys, error }) => {
+  broken.forEach(({ id, keys, error }) => {
     const count = `${keys} ${keys === 1 ? 'string' : 'strings'}`;
 
-    console.info(`  ${error ? '✗' : '✓'} ${id}: ${count}${error ? `. ${error}` : ''}`);
+    console.info(`  ✗ ${id}: ${count}. ${error}`);
   });
 
   console.info(
@@ -76,12 +78,13 @@ const logger = createLogger('error');
 const { error: logError } = logger;
 
 /**
- * Log an error, unless a frame logged it.
+ * Log an error, unless a frame logged it, or it’s a view transition the app had started when its
+ * frame was restarted.
  * @param {string} message Message.
  * @param {import('vite').LogErrorOptions} [options] Options.
  */
 logger.error = (message, options) => {
-  if (!message.includes('[console.')) {
+  if (!message.includes('[console.') && !message.includes('Transition was aborted')) {
     logError(message, options);
   }
 };
@@ -102,9 +105,34 @@ try {
   browser = await chromium.launch();
 
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+
+  // Show each screen as the review page finishes it, unless the result is printed as JSON
+  if (!process.argv.includes('--json')) {
+    page.on('console', (message) => {
+      const text = message.text();
+
+      if (text.startsWith('[l10n-check] ')) {
+        console.info(text.slice('[l10n-check] '.length));
+      }
+    });
+  }
+
   // `--only github/,workflow/` runs the screens whose ID starts with `github/` or `workflow/` only
-  const onlyIndex = process.argv.indexOf('--only');
-  const only = onlyIndex === -1 ? '' : (process.argv[onlyIndex + 1] ?? '');
+  // `--only=github/` works too
+  const onlyIndex = process.argv.findIndex((arg) => arg === '--only' || arg.startsWith('--only='));
+  const onlyArg = process.argv[onlyIndex] ?? '';
+
+  const only =
+    onlyIndex === -1
+      ? ''
+      : onlyArg.startsWith('--only=')
+        ? onlyArg.slice('--only='.length)
+        : (process.argv[onlyIndex + 1] ?? '');
+
+  // Without prefixes, every screen would run, which isn’t what `--only` asks for
+  if (onlyIndex !== -1 && (!only.replaceAll(',', '') || only.startsWith('--'))) {
+    throw new Error('`--only` needs a comma-separated list of screen ID prefixes.');
+  }
 
   await page.goto(new URL(`l10n-review/?check=${encodeURIComponent(only)}`, baseURL).href);
 

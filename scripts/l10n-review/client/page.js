@@ -708,10 +708,15 @@ const seedRepository = async () => {
  * Wait for a message from a frame.
  * @param {AppFrame} frame Frame.
  * @param {(data: any) => boolean} match Function telling whether a message is the one.
- * @returns {Promise<any>} Message.
+ * @param {{ timeout: number, error: string }} [limit] Milliseconds to wait at most, and the error
+ * to resolve with once they’re over.
+ * @returns {Promise<any>} Message, or `{ error }` if the time ran out.
  */
-const waitForMessage = (frame, match) =>
+const waitForMessage = (frame, match, limit) =>
   new Promise((resolve) => {
+    /** @type {number | undefined} */
+    let timer;
+
     /**
      * Resolve with the message if it’s the one.
      * @param {MessageEvent} event Event.
@@ -719,11 +724,19 @@ const waitForMessage = (frame, match) =>
     const listener = ({ origin, data }) => {
       if (origin === window.location.origin && data?.frame === frame.id && match(data)) {
         window.removeEventListener('message', listener);
+        window.clearTimeout(timer);
         resolve(data);
       }
     };
 
     window.addEventListener('message', listener);
+
+    if (limit) {
+      timer = window.setTimeout(() => {
+        window.removeEventListener('message', listener);
+        resolve({ error: limit.error });
+      }, limit.timeout);
+    }
   });
 
 /**
@@ -785,23 +798,27 @@ const bootFrame = async (frame, boot = {}) => {
 
     // A start that never reports back, e.g. because the page in the frame couldn’t be replaced,
     // fails after a while rather than holding up the review, or a coverage run, for good
-    const ready = Promise.race([
-      waitForMessage(frame, (data) => data.type === 'ready'),
-      new Promise((resolve) => {
-        window.setTimeout(() => resolve({ error: 'it didn’t start within 60 s' }), 60_000);
-      }),
-    ]);
+    const ready = waitForMessage(frame, (data) => data.type === 'ready', {
+      timeout: 60_000,
+      error: 'it didn’t start within 60 s',
+    });
 
     frame.bootKey = undefined;
     frame.pendingKey = bootKey;
     frame.element.src = `/l10n-review/app/?${params}`;
-    frame.pending = ready.then(({ error, phases }) => {
-      // eslint-disable-next-line no-console
-      console.info(`[l10n-review] ${frame.id} started in`, phases);
 
-      // A newer start may have replaced this one
-      if (frame.pendingKey === bootKey) {
-        frame.bootKey = bootKey;
+    /** @type {Promise<number>} */
+    const pending = ready.then(({ error, phases }) => {
+      if (!error) {
+        // eslint-disable-next-line no-console
+        console.info(`[l10n-review] ${frame.id} started in`, phases);
+      }
+
+      // A newer start may have replaced this one, even with the same options after the spare pair
+      // was stopped. A start that failed isn’t recorded, so the next screen with these options
+      // starts the app again instead of running in one that never started
+      if (frame.pending === pending && frame.pendingKey === bootKey) {
+        frame.bootKey = error ? undefined : bootKey;
         frame.pendingKey = undefined;
       }
 
@@ -809,6 +826,8 @@ const bootFrame = async (frame, boot = {}) => {
 
       return performance.now() - start;
     });
+
+    frame.pending = pending;
   }
 
   await frame.pending;
@@ -1086,7 +1105,13 @@ const CARD_SIZE = 12;
  * @returns {Set<string>} Keys.
  */
 const getCoveredKeys = () =>
-  new Set([...state.seen, ...state.scenarios.flatMap(({ id }) => state.coverage[id]?.keys ?? [])]);
+  new Set([
+    ...state.seen,
+    // A screen that failed may not show what it should, so its record doesn’t count as coverage
+    ...state.scenarios.flatMap(({ id }) =>
+      state.coverage[id]?.error ? [] : (state.coverage[id]?.keys ?? []),
+    ),
+  ]);
 
 /**
  * Build the cards for the strings no screen shows, in the order of the source files, a section at
@@ -1314,6 +1339,15 @@ const openScreen = async (index, { direction } = {}) => {
 
     const boots = await Promise.all(pair.map((f) => bootFrame(f, scenario.boot)));
     const results = await Promise.all(pair.map((f) => runInFrame(f, scenario)));
+
+    // A step that changes the Git repository, like a colleague’s commit, leaves it changed: the
+    // screen starts the app again, with a new repository, the next time it opens, e.g. on a retry
+    if (scenario.steps?.some((step) => 'git' in step)) {
+      pair.forEach((frame) => {
+        frame.bootKey = undefined;
+      });
+    }
+
     const total = performance.now() - start;
     const bootMs = Math.max(...boots.map((ms) => ms ?? 0));
 
@@ -1329,7 +1363,12 @@ const openScreen = async (index, { direction } = {}) => {
     }
 
     state.keys = getScreenKeys();
-    state.keys.forEach((key) => state.seen.add(key));
+
+    // The keys of a screen that failed stay listed for review, but don’t count as coverage
+    if (!state.lastError) {
+      state.keys.forEach((key) => state.seen.add(key));
+    }
+
     state.selected = getPendingKeys()[0] ?? state.keys[0];
   } catch (/** @type {any} */ ex) {
     state.lastError = ex.message;
@@ -1804,17 +1843,44 @@ resizeObserver.observe($('#target'));
 const runCheck = async () => {
   /** @type {{ id: string, title: string, keys: number, error?: string }[]} */
   const scenarios = [];
+
   // `?check=github/,workflow/` runs the screens whose ID starts with `github/` or `workflow/` only
-  const only = (new URLSearchParams(window.location.search).get('check') ?? '').split(',');
+  const only = (new URLSearchParams(window.location.search).get('check') ?? '')
+    .split(',')
+    .filter(Boolean);
+
+  const selected = [...state.scenarios.entries()].filter(
+    ([, { id }]) => !only.length || only.some((prefix) => id.startsWith(prefix)),
+  );
+
+  // A misspelled prefix would otherwise pass with no screen run
+  if (!selected.length) {
+    throw new Error(`No screen ID starts with ${only.join(' or ')}.`);
+  }
 
   // eslint-disable-next-line no-restricted-syntax
-  for (const [index, { id, title }] of state.scenarios.entries()) {
-    // eslint-disable-next-line no-continue
-    if (!only.some((prefix) => id.startsWith(prefix))) continue;
-
+  for (const [count, [index, { id, title }]] of selected.entries()) {
     // eslint-disable-next-line no-await-in-loop
     await openScreen(index);
-    scenarios.push({ id, title, keys: state.keys.length, error: state.lastError });
+
+    // A step can time out while the app is busy in a long run: a screen only fails if it fails
+    // twice
+    if (state.lastError) {
+      // eslint-disable-next-line no-await-in-loop
+      await openScreen(index);
+    }
+
+    const { length: keys } = state.keys;
+    const error = state.lastError;
+
+    scenarios.push({ id, title, keys, error });
+    // `pnpm l10n:coverage` prints these lines as the run goes
+    // eslint-disable-next-line no-console
+    console.info(
+      `[l10n-check] [${count + 1}/${selected.length}] ${error ? '✗' : '✓'} ${id}: ${keys} ` +
+        `${keys === 1 ? 'string' : 'strings'}` +
+        `${error ? `. ${error}` : ''}`,
+    );
   }
 
   const covered = getCoveredKeys();

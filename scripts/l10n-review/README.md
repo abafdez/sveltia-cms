@@ -44,11 +44,11 @@ A string counts as reviewed when the state file holds the hash of its current En
 
 `pnpm l10n:coverage` starts the dev server, opens the review page in a headless browser in its check mode (`?check`), runs every screen without accepting anything, and prints:
 
-- each screen with the number of strings it shows, and why it didn’t show properly, if it didn’t;
-- how many strings the screens show in all;
+- each screen as it finishes, with the number of strings it shows, and why it didn’t show properly, if it didn’t;
+- the screens to fix again at the end, then how many strings the screens show in all;
 - the strings no screen shows, counted by section of `en-US.yaml`: the to-do list for scenarios.
 
-It exits with code 1 if a screen needs fixing, and `--json` prints the full result. `--only github/,workflow/` runs the screens whose ID starts with one of the prefixes. Run it after pulling upstream changes, and don’t edit the tool’s browser files while it runs: Vite reloads the page and the run stops. A review records what each screen shows too, so the cards follow as screens are added.
+A screen that fails is run a second time before it counts as one to fix, as a step can time out while the app is busy in a long run; a failed screen’s strings don’t count as covered. It exits with code 1 if a screen needs fixing, and `--json` prints the full result. `--only github/,workflow/` runs the screens whose ID starts with one of the prefixes. Run it after pulling upstream changes, and don’t edit the tool’s browser files while it runs: Vite reloads the page and the run stops. A review records what each screen shows too, so the cards follow as screens are added.
 
 ## Status
 
@@ -74,7 +74,7 @@ Live everything that can be:
 - **Browser conditions** faked in the frame (an unsupported browser, no File System Access, Brave, an insecure page, clipboard and location refused, a touch screen, another browser language, an installable app) and **online services** faked with their API keys (Google Translate, Unsplash), plus the cloud storage services.
 - **Sveltia UI components** the app doesn’t show, from a small showcase mounted over the app in the frame: the calendar, the password, secret and number inputs, the combobox, selected tags, a disclosure, table and grid rows, a dialog. The rich text editor’s alignment menu, tables, link editor and emoji suggestions.
 - **Sample files** of every type the app has a label for, written to the test repository by the page, and more configurations: read-only, validation rules, optional locales, more errors and warnings.
-- 235 screens. The last complete coverage run, with 205 of them, showed 573 of 1,215 strings (47%) in about 23 minutes; the 30 screens added since (sample files, Editorial Workflow actions, commit prompts, save conflicts, read-only and validation configurations) haven’t been through a full run yet, and a few may need fixing.
+- 235 screens. The last complete coverage run showed 690 of 1,215 strings (57%); two screens timed out under load and passed on their own, which led to the retry.
 
 Not done yet: see [Work left](#work-left).
 

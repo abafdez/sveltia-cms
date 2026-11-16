@@ -66,9 +66,11 @@ const GIT_HOSTS = [
  */
 let consoleEntries = [];
 /**
- * What the app logged while starting, kept for the first screen, and for that screen again when
- * the page runs it once more in the same frame: the app doesn’t log it twice.
- * @type {{ scenario: string, entries: { level: string, text: string }[] } | undefined}
+ * What the app logged while starting, and the messages that showed briefly meanwhile, kept for
+ * the first screen, and for that screen again when the page runs it once more in the same frame:
+ * the app doesn’t show them twice.
+ * @type {{ scenario: string, entries: { level: string, text: string }[], brief: Map<string,
+ * string> } | undefined}
  */
 let startEntries;
 /**
@@ -211,7 +213,9 @@ const SERVICE_FAKES = {
 /**
  * Fakes of the services the scenario uses.
  */
-const services = (BOOT.services ?? []).map((name) => SERVICE_FAKES[name]).filter(Boolean);
+const services = (BOOT.services ?? [])
+  .filter((name) => Object.hasOwn(SERVICE_FAKES, name))
+  .map((name) => SERVICE_FAKES[name]);
 
 // --- Storage ---------------------------------------------------------------------------------
 
@@ -303,13 +307,10 @@ Object.defineProperty(window, 'localStorage', {
       locale: LOCALE,
       ...(BOOT.devMode ? { devModeEnabled: true } : {}),
       // The API keys of the faked online services, which the app needs to use them
-      ...(BOOT.services?.length
+      ...(services.length
         ? {
             apiKeys: Object.fromEntries(
-              BOOT.services.map((name) => [
-                SERVICE_FAKES[name]?.serviceId,
-                SERVICE_FAKES[name]?.apiKey,
-              ]),
+              services.map(({ serviceId, apiKey }) => [serviceId, apiKey]),
             ),
           }
         : {}),
@@ -729,6 +730,15 @@ let shownBriefly = new Map();
  * @param {Node} node Node.
  */
 const recordBrief = (node) => {
+  // Most of what the app adds is outside live regions: skip it without looking at its text
+  if (
+    node instanceof Element &&
+    !node.closest(LIVE_SELECTOR) &&
+    !node.querySelector(LIVE_SELECTOR)
+  ) {
+    return;
+  }
+
   const nodes =
     node instanceof Text
       ? [node]
@@ -1215,13 +1225,12 @@ const findByText = (text) =>
   [...document.body.querySelectorAll('*')]
     .filter(
       (el) =>
-        isRendered(el) &&
         [...el.childNodes].some(
           (node) =>
             node instanceof Text &&
-            splitMarkedText(node.data).length === 0 &&
-            node.data.trim() === text,
-        ),
+            node.data.trim() === text &&
+            splitMarkedText(node.data).length === 0,
+        ) && isRendered(el),
     )
     .at(-1);
 
@@ -1294,11 +1303,11 @@ const findTarget = async (target) => {
 };
 
 /**
- * Click an element showing a message.
- * @param {string} key Message key.
+ * Click what a step acts on, e.g. an element showing a message.
+ * @param {StepTarget} target Target.
  */
-const clickMessage = async (key) => {
-  const element = await findTarget(key);
+const clickTarget = async (target) => {
+  const element = await findTarget(target);
 
   /** @type {HTMLElement} */ (element.closest(CLICKABLE_SELECTOR) ?? element).click();
 };
@@ -1415,7 +1424,14 @@ const uploadFiles = async (target, files) => {
   const element = await findTarget(target);
 
   const input = /** @type {HTMLInputElement | null} */ (
-    [element, ...document.querySelectorAll('[role="dialog"], [role="alertdialog"], body')]
+    [
+      element,
+      // A closed dialog may stay in the page, with a file input of its own
+      ...[...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')].filter((el) =>
+        isRendered(el),
+      ),
+      document.body,
+    ]
       .map((el) => el.closest('div, section, dialog, body')?.querySelector('input[type="file"]'))
       .find(Boolean) ?? null
   );
@@ -1461,7 +1477,10 @@ const runGitAction = async (name) => {
   });
 
   if (!response.ok) {
-    throw new Error(`The Git action “${name}” failed: ${(await response.json()).error}`);
+    // The server answers an error as JSON, but a request it doesn’t route gets plain text
+    const { error = response.statusText } = await response.json().catch(() => ({}));
+
+    throw new Error(`The Git action “${name}” failed: ${error}`);
   }
 };
 
@@ -1526,11 +1545,21 @@ const goTo = async (route) => {
 const runScenario = async ({ route, steps = [] }) => {
   // The first screen keeps what the app logged while starting, also when it runs again
   const scenarioKey = JSON.stringify({ route, steps });
+  const isFirstRun = !startEntries;
 
-  startEntries ??= { scenario: scenarioKey, entries: consoleEntries };
-  consoleEntries = startEntries.scenario === scenarioKey ? startEntries.entries : [];
-  // The first screen also keeps what showed while the app started, like a sign-in error
-  shownBriefly = hasRun ? new Map() : shownBriefly;
+  startEntries ??= { scenario: scenarioKey, entries: consoleEntries, brief: shownBriefly };
+
+  const isStartScreen = startEntries.scenario === scenarioKey;
+
+  consoleEntries = isStartScreen ? startEntries.entries : [];
+  // The first screen also keeps what showed while the app started, like a sign-in error, also when
+  // it runs again. Its first run adds to the kept messages, as a message the app shows once, like a
+  // late loading notification, may only show then; a later run adds to a copy
+  shownBriefly = isStartScreen
+    ? isFirstRun
+      ? startEntries.brief
+      : new Map(startEntries.brief)
+    : new Map();
   outlines = { keys: [] };
   drawOutlines();
 
@@ -1567,9 +1596,7 @@ const runScenario = async ({ route, steps = [] }) => {
   for (const step of steps) {
     /* eslint-disable no-await-in-loop */
     if ('click' in step) {
-      const element = await findTarget(step.click);
-
-      /** @type {HTMLElement} */ (element.closest(CLICKABLE_SELECTOR) ?? element).click();
+      await clickTarget(step.click);
     } else if ('wait' in step) {
       await waitFor(() => findElement(step.wait), 6000).catch(() => {
         throw new Error(`The message “${step.wait}” didn’t show`);
@@ -1799,7 +1826,7 @@ const nextTask = () =>
       // With a Git repository, the app signs in with the stored session. A demo site has its own
       // button on the sign-in page
       if (!BOOT.git) {
-        await clickMessage(BOOT.demo ? 'start_demo' : 'work_with_test_repo');
+        await clickTarget(BOOT.demo ? 'start_demo' : 'work_with_test_repo');
       }
 
       // The main screen has the account menu, as the end-to-end tests also expect
