@@ -72,7 +72,7 @@ document.body.innerHTML = `
     <select id="locale" aria-label="Locale"></select>
     <nav>
       <button id="prev" title="Previous screen (←)">←</button>
-      <span id="position"></span>
+      <button id="position" title="Go to a screen (G)"></button>
       <button id="next" title="Next screen (→)">→</button>
     </nav>
     <strong id="title"></strong>
@@ -86,6 +86,15 @@ document.body.innerHTML = `
       </button>
     </div>
   </header>
+  <dialog id="screens" aria-label="Screens">
+    <form method="dialog" class="screens-head">
+      <input id="screens-filter" type="search" placeholder="Filter screens"
+        aria-label="Filter screens" />
+      <span id="screens-summary"></span>
+      <button title="Close (Escape)">✕</button>
+    </form>
+    <div id="screens-list"></div>
+  </dialog>
   <main>
     <section class="pane" id="source-pane">
       <h2 id="source-label"></h2>
@@ -126,7 +135,7 @@ document.body.innerHTML = `
     </div>
     <div id="editor" hidden></div>
     <p class="help">
-      <kbd>←</kbd><kbd>→</kbd> screens (leaving one accepts it) ·
+      <kbd>←</kbd><kbd>→</kbd> screens (leaving one accepts it) · <kbd>G</kbd> go to a screen ·
       <kbd>↑</kbd><kbd>↓</kbd> select ·
       <kbd>Enter</kbd> edit ·
       <kbd>V</kbd> one pane ·
@@ -1643,6 +1652,172 @@ const moveSelection = (delta) => {
   }
 };
 
+// --- Screen picker -----------------------------------------------------------------------------
+
+/**
+ * Count the strings of a list of keys left to review and without a translation.
+ * @param {Iterable<string>} keys Keys.
+ * @returns {{ total: number, pending: number, missing: number }} Counts.
+ */
+const countKeys = (keys) => {
+  let total = 0;
+  let pending = 0;
+  let missing = 0;
+
+  new Set(keys).forEach((key) => {
+    const item = state.items.get(key);
+
+    if (!item) return;
+
+    total += 1;
+    if (!item.reviewed) pending += 1;
+    if (item.status === 'missing') missing += 1;
+  });
+
+  return { total, pending, missing };
+};
+
+/**
+ * Describe counts for the picker.
+ * @param {{ total: number, pending: number, missing: number }} counts Counts.
+ * @returns {string} Text.
+ */
+const describeCounts = ({ total, pending, missing }) =>
+  [`${pending} to review`, missing ? `${missing} missing` : '', `${total} strings`]
+    .filter(Boolean)
+    .join(' · ');
+
+/**
+ * A screen or card in the picker.
+ * @typedef {object} ScreenEntry
+ * @property {number} index Index of the screen.
+ * @property {string} title Title.
+ * @property {string[]} keys Keys it showed when it last ran.
+ * @property {string} [error] Why it didn’t show properly, if it didn’t.
+ * @property {boolean} seen Whether it has run.
+ */
+
+/**
+ * Group the screens and cards by section, in the order the arrow keys go through them: a section
+ * whose screens aren’t all next to each other comes up once per run of them, so each group is one
+ * range.
+ * @returns {{ name: string, entries: ScreenEntry[] }[]} Groups.
+ */
+const getScreenGroups = () => {
+  /** @type {{ name: string, entries: ScreenEntry[] }[]} */
+  const groups = [];
+
+  /**
+   * Add an entry to the last group, or to a new one if the last one is another section.
+   * @param {string} name Group name.
+   * @param {ScreenEntry} entry Entry.
+   */
+  const add = (name, entry) => {
+    const last = groups.at(-1);
+
+    if (last?.name === name) last.entries.push(entry);
+    else groups.push({ name, entries: [entry] });
+  };
+
+  state.scenarios.forEach(({ id, title }, index) => {
+    const { keys = [], error } = state.coverage[id] ?? {};
+
+    add(id.split('/')[0], { index, title, keys, error, seen: id in state.coverage });
+  });
+  state.cards.forEach(({ section, keys }, index) => {
+    add('Not on a screen', {
+      index: state.scenarios.length + index,
+      title: section,
+      keys,
+      seen: true,
+    });
+  });
+
+  return groups;
+};
+
+/**
+ * Fill the screen picker, keeping the entries matching the filter.
+ */
+const renderScreenPicker = () => {
+  const filter = /** @type {HTMLInputElement} */ ($('#screens-filter')).value.trim().toLowerCase();
+  const list = $('#screens-list');
+  const groups = getScreenGroups();
+  const all = countKeys(groups.flatMap(({ entries }) => entries.flatMap(({ keys }) => keys)));
+
+  $('#screens-summary').textContent = describeCounts(all);
+  list.replaceChildren(
+    ...groups.flatMap(({ name, entries }) => {
+      const shown = entries.filter(
+        ({ title, index }) =>
+          !filter || `${name} ${title} ${index + 1}`.toLowerCase().includes(filter),
+      );
+
+      if (!shown.length) return [];
+
+      const details = document.createElement('details');
+      const summary = document.createElement('summary');
+      const first = entries[0].index + 1;
+      const last = entries[entries.length - 1].index + 1;
+      const errors = entries.filter(({ error }) => error).length;
+      const counts = countKeys(entries.flatMap(({ keys }) => keys));
+
+      details.open = !!filter || entries.some(({ index }) => index === state.index);
+      summary.innerHTML =
+        '<strong></strong><span class="range"></span><span class="counts"></span>';
+      summary.children[0].textContent = name;
+      summary.children[1].textContent =
+        `#${first}${last > first ? `–${last}` : ''} · ${entries.length} ` +
+        `${name === 'Not on a screen' ? 'card' : 'screen'}${entries.length === 1 ? '' : 's'}`;
+      summary.children[2].textContent =
+        describeCounts(counts) + (errors ? ` · ${errors} failed` : '');
+      summary.classList.toggle('done', entries.every(({ seen }) => seen) && !counts.pending);
+      details.append(summary);
+
+      shown.forEach(({ index, title, keys, error, seen }) => {
+        const button = document.createElement('button');
+        const entryCounts = countKeys(keys);
+
+        button.type = 'button';
+        button.classList.toggle('current', index === state.index);
+        button.classList.toggle('done', seen && !entryCounts.pending);
+        button.classList.toggle('error', !!error);
+        button.title = error ?? '';
+        button.innerHTML = '<span class="number"></span><span></span><span class="counts"></span>';
+        button.children[0].textContent = `#${index + 1}`;
+        button.children[1].textContent = title;
+        button.children[2].textContent = seen
+          ? describeCounts(entryCounts) + (error ? ' · failed' : '')
+          : 'not run yet';
+        button.addEventListener('click', () => {
+          /** @type {HTMLDialogElement} */ ($('#screens')).close();
+          if (index !== state.index) leaveScreen(index);
+        });
+        details.append(button);
+      });
+
+      return [details];
+    }),
+  );
+};
+
+/**
+ * Open the screen picker, with the current screen in view.
+ */
+const openScreenPicker = () => {
+  const dialog = /** @type {HTMLDialogElement} */ ($('#screens'));
+
+  if (dialog.open || state.editing) return;
+
+  /** @type {HTMLInputElement} */ ($('#screens-filter')).value = '';
+  renderScreenPicker();
+  dialog.showModal();
+  $('#screens-list .current')?.scrollIntoView({ block: 'center' });
+};
+
+$('#position').addEventListener('click', openScreenPicker);
+$('#screens-filter').addEventListener('input', renderScreenPicker);
+
 /**
  * Run the command of a key, pressed on the page or in a frame.
  * @param {string} key Key, as in `KeyboardEvent.key`.
@@ -1650,6 +1825,15 @@ const moveSelection = (delta) => {
  */
 const runKey = (key) => {
   const name = key.length === 1 ? key.toLowerCase() : key;
+
+  // The picker's own keys, like Escape and typing in its filter, are left to it
+  if (/** @type {HTMLDialogElement} */ ($('#screens')).open) return false;
+
+  if (name === 'g') {
+    openScreenPicker();
+
+    return true;
+  }
 
   // The view can change while a screen loads
   if (name === 'v') {

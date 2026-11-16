@@ -606,3 +606,109 @@ body.card-mode #card-view {
   margin: 2px 0;
   color: var(--muted);
 }
+
+/* Screen picker */
+
+/* cspell:ignore nums */
+
+#position {
+  min-width: 6em;
+  font-variant-numeric: tabular-nums;
+}
+
+#screens {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+#screens::backdrop {
+  background: rgb(0 0 0 / 40%);
+}
+
+#screens .screens-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+#screens-filter {
+  flex: 1;
+  padding: 6px 8px;
+}
+
+#screens-summary,
+#screens .counts,
+#screens .range,
+#screens .number {
+  color: var(--muted);
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+
+#screens-list {
+  padding: 8px 12px 12px;
+}
+
+#screens details {
+  border-bottom: 1px solid var(--border);
+}
+
+#screens summary {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 8px 0;
+  cursor: pointer;
+}
+
+#screens summary .counts {
+  margin-left: auto;
+}
+
+#screens summary.done strong,
+#screens button.done {
+  color: var(--ok);
+}
+
+#screens details > button {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  width: 100%;
+  padding: 4px 8px 4px 20px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+#screens details > button:hover,
+#screens details > button:focus-visible {
+  background: var(--bg);
+}
+
+#screens details > button.current {
+  outline: 2px solid var(--accent);
+}
+
+#screens details > button.error {
+  color: var(--error);
+}
+
+#screens details > button .counts {
+  margin-left: auto;
+  white-space: nowrap;
+}

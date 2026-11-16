@@ -27,6 +27,7 @@ The page has a preview of the current screen (two panes side by side, or one at 
 | Key | Action |
 | --- | --- |
 | <kbd>←</kbd> <kbd>→</kbd> | Previous or next screen. Leaving a screen accepts its strings. |
+| <kbd>G</kbd> | Go to a screen: the list groups the screens and cards by section, each run of them with its range, the strings left to review and without a translation, and the screens that failed. Click the position (`87 / 291`) for it too. |
 | <kbd>↑</kbd> <kbd>↓</kbd> | Select a string. It’s spotlighted in the preview, and the translation pane shows the English text by it. |
 | <kbd>Enter</kbd> | Edit the selected string. In the editor, <kbd>Enter</kbd> saves, <kbd>Shift</kbd>+<kbd>Enter</kbd> starts a new line, <kbd>Esc</kbd> cancels. |
 | <kbd>V</kbd> | One pane or two. One is the default below 1200 px. |
