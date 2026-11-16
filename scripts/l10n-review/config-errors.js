@@ -291,7 +291,7 @@ const WARNING_COLLECTION = {
     { name: 'self', widget: 'compute', value: '{{fields.self}}' },
     { name: 'cycle_a', widget: 'compute', value: '{{fields.cycle_b}}' },
     { name: 'cycle_b', widget: 'compute', value: '{{fields.cycle_a}}' },
-    { name: 'date', widget: 'datetime', localize_format: true },
+    { name: 'date', widget: 'datetime', format: 'YYYY', localize_format: true },
   ],
 };
 
@@ -436,6 +436,71 @@ const MORE_WARNINGS_COLLECTION = collection({
     { name: 'intro', widget: 'richtext', multiline: false, buttons: ['bold', 'heading-one'] },
   ],
 });
+
+/**
+ * Collections with warnings about identifiers, preview paths, dates, localized defaults and publish
+ * modes, all of which the app can start with.
+ */
+const LATE_WARNING_COLLECTIONS = [
+  collection({ name: 'no_identifier', fields: [{ name: 'heading' }] }),
+  collection({ name: 'preview_no_date', preview_path: '{{year}}/{{slug}}' }),
+  collection({
+    name: 'preview_missing',
+    preview_path: '{{year}}/{{fields.missing}}',
+    preview_path_date_field: 'missing',
+  }),
+  collection({
+    name: 'unlocalized_dates',
+    fields: [
+      { name: 'title' },
+      { name: 'date', widget: 'datetime', format: 'YYYY', localize_format: true },
+    ],
+  }),
+  collection({
+    name: 'localized_options',
+    i18n: true,
+    fields: [
+      { name: 'title', i18n: true },
+      {
+        name: 'tags',
+        widget: 'select',
+        options: ['a', 'b'],
+        multiple: true,
+        i18n: 'duplicate_if_empty',
+      },
+      { name: 'greeting', i18n: true, default_localized: { en: 'Hello', xx: 'Hi' } },
+    ],
+  }),
+  collection({
+    name: 'simple_stages',
+    publish_mode: { type: 'simple', stages: ['draft', 'pending_review', 'pending_publish'] },
+  }),
+];
+
+/**
+ * Collections with errors in thumbnails, object fields and the locales of file collections.
+ */
+const LATE_ERROR_COLLECTIONS = [
+  collection({ name: 'text_thumbnail', thumbnail: 'title' }),
+  collection({
+    name: 'object_with_types',
+    fields: [
+      { name: 'title' },
+      {
+        name: 'block',
+        widget: 'object',
+        fields: [{ name: 'a' }],
+        types: [{ name: 'b', fields: [{ name: 'c' }] }],
+      },
+    ],
+  }),
+  {
+    name: 'unlocalized_files',
+    label: 'unlocalized_files',
+    i18n: true,
+    files: [{ name: 'about', file: 'content/about-x.md', fields: [{ name: 'title' }] }],
+  },
+];
 
 /**
  * A way to break the configuration.
@@ -628,6 +693,27 @@ export const CONFIG_ERROR_SCENARIOS = [
       ...config,
       public_folder: '',
       collections: [...config.collections, MORE_WARNINGS_COLLECTION],
+    }),
+  },
+  {
+    name: 'late-warnings',
+    label: 'Warnings about identifiers, preview paths, dates, localized defaults and stages',
+    warningsOnly: true,
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    build: (config) => ({
+      ...config,
+      backend: { ...config.backend, use_graphql: true },
+      collections: [...config.collections, ...LATE_WARNING_COLLECTIONS],
+    }),
+  },
+  {
+    name: 'late-errors',
+    label: 'Errors in the public folder, thumbnails, object fields and localized files',
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    build: (config) => ({
+      ...config,
+      public_folder: './images',
+      collections: [...config.collections, ...LATE_ERROR_COLLECTIONS],
     }),
   },
   {

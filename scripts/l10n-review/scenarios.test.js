@@ -8,7 +8,7 @@ import { APP_LOCALES_DIR, squashStrings } from '../vite/locales.js';
 import { resolveModuleDir } from '../vite/utils.js';
 
 import { GIT_ACTIONS, GIT_SETUPS } from './git.js';
-import { CONFIGS, SCENARIOS, STEP_TARGETS } from './scenarios.js';
+import { CONFIGS, FILE_TYPES, SCENARIOS, STEP_TARGETS } from './scenarios.js';
 
 /**
  * Read the `en-US` message keys of the app and of Sveltia UI, the latter under `_sui`, as the app
@@ -85,5 +85,15 @@ describe('SCENARIOS', () => {
         });
       });
     });
+  });
+});
+
+describe('FILE_TYPES', () => {
+  test('lists every extension with a label in en-US.yaml', async () => {
+    const labels = [...(await readSourceKeys())]
+      .filter((key) => key.startsWith('file_type_labels.'))
+      .map((key) => key.slice('file_type_labels.'.length));
+
+    expect([...FILE_TYPES].sort()).toEqual(labels.sort());
   });
 });

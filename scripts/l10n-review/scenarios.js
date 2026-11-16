@@ -69,6 +69,17 @@ import { GITHUB_BACKEND, WORKFLOW_POSTS } from './git.js';
  */
 
 /**
+ * Extensions with a label in `file_type_labels` of `en-US.yaml`, which a test keeps in step. The
+ * upload preview labels each file it lists, so one drop shows them all.
+ */
+export const FILE_TYPES = [
+  // cspell:disable-next-line
+  ...'avif bmp gif heic heif ico jpeg jpg png svg tif tiff avi m4v mov mp4 mpeg mpg ogg ogv ts webm webp 3gp 3g2 aac mid midi m4a mp3 oga opus wav weba csv doc docx odp ods odt pdf ppt pptx rtf xls xlsx html js json md toml yaml yml'.split(
+    ' ',
+  ),
+];
+
+/**
  * A step in a scenario, run once the app is on the route:
  * - `click`: click an element;
  * - `wait`: wait for a message to show, which also checks that the screen shows what it’s meant to;
@@ -718,9 +729,25 @@ export const SCENARIOS = [
   },
   {
     id: 'assets/upload-confirm',
-    title: 'Assets › Files dropped on the list',
+    title: 'Assets › Files chosen to upload',
     route: '#/assets/static/images',
-    steps: [{ drop: 'upload_assets', files: [{ name: 'notes.txt', type: 'text/plain' }] }],
+    steps: [{ upload: 'upload_assets', files: [{ name: 'notes.txt', type: 'text/plain' }] }],
+  },
+  {
+    id: 'assets/upload-file-types',
+    title: 'Assets › Files of every type chosen to upload, with their type labels',
+    route: '#/assets/static/files',
+    steps: [
+      {
+        upload: 'upload_assets',
+        files: FILE_TYPES.map((ext) => ({
+          name: `sample.${ext}`,
+          type: 'application/octet-stream',
+        })),
+      },
+      // The files are listed one at a time
+      { wait: 'file_type_labels.yml' },
+    ],
   },
   {
     id: 'assets/select-all',
